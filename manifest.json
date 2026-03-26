@@ -1,0 +1,9 @@
+{
+	"id": "gantt-bases-view",
+	"name": "Gantt Bases View",
+	"version": "0.17.0",
+	"minAppVersion": "1.9.10",
+	"description": "A Gantt chart custom view for Obsidian Bases with TaskNotes-compatible frontmatter and MS Project dependency types.",
+	"author": "jortscity",
+	"isDesktopOnly": false
+}

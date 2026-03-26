@@ -1,0 +1,28 @@
+{
+	"name": "gantt-bases-view",
+	"version": "0.17.0",
+	"description": "A Gantt chart custom view for Obsidian Bases",
+	"main": "main.js",
+	"scripts": {
+		"dev": "node esbuild.config.mjs",
+		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
+		"deploy": "bash deploy.sh"
+	},
+	"keywords": [
+		"obsidian",
+		"obsidian-plugin",
+		"gantt",
+		"bases",
+		"task-management"
+	],
+	"author": "jortscity",
+	"license": "MIT",
+	"devDependencies": {
+		"@types/node": "^22.0.0",
+		"builtin-modules": "3.3.0",
+		"esbuild": "0.24.0",
+		"obsidian": "latest",
+		"tslib": "2.8.0",
+		"typescript": "^5.5.0"
+	}
+}
