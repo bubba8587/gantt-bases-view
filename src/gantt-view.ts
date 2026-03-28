@@ -1,5 +1,6 @@
 import { BasesView, BasesViewConfig, App, BasesEntryGroup } from 'obsidian';
 import type { QueryController } from 'obsidian';
+import type GanttBasesViewPlugin from './main.ts';
 import type { GanttTask, TaskGroup, GanttViewSettings, TimelineConfig, ColumnHeader, ZoomLevel } from './types.ts';
 import { ROW_HEIGHT, GROUP_HEADER_HEIGHT, BAR_HEIGHT, BAR_MARGIN_TOP, SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH, MIN_TIMELINE_WIDTH, HEADER_HEIGHT, DEP_FIELDS, stripWikilink } from './types.ts';
 import { readSettings, extractTask, resolveDependencyPaths } from './field-mapping.ts';
@@ -12,14 +13,20 @@ import { exportToTSV, copyToClipboard } from './export.ts';
 import { detectViolations, openViolationPanel, closeViolationPanel } from './violations.ts';
 import { closeActivePopup } from './popup-editor.ts';
 
+import type { ColorByField } from './types.ts';
+
 const ZOOM_LEVELS: ZoomLevel[] = ['day', 'week', 'month', '1year', '2year', '3year'];
 const ZOOM_LABELS: Record<ZoomLevel, string> = { day: 'Day', week: 'Week', month: 'Month', '1year': '1Y', '2year': '2Y', '3year': '3Y' };
+const COLOR_BY_OPTIONS: ColorByField[] = ['none', 'status', 'priority'];
+const COLOR_BY_LABELS: Record<ColorByField, string> = { none: 'No color', status: 'Status', priority: 'Priority' };
 
 export class GanttView extends BasesView {
 	type = 'gantt';
 	private scrollEl: HTMLElement;  // the framework-managed parent (scroll element)
 	private rootEl: HTMLElement;    // our own child div — all rendering goes here
+	private plugin: GanttBasesViewPlugin;
 	private _localZoom: ZoomLevel | null = null;  // overrides config zoom when set
+	private _localColorBy: ColorByField = 'none'; // toolbar-driven bar coloring
 	private _sidebarWidth: number = SIDEBAR_WIDTH; // persists across re-renders for drag resize
 	private _dragCleanup: (() => void) | null = null; // cancels any in-progress sidebar drag
 	private _collapsedGroups: Set<string> = new Set(); // group keys the user has collapsed
@@ -29,10 +36,11 @@ export class GanttView extends BasesView {
 	private _lastRenderedWidth: number = 0;
 	private _resizeTimer: ReturnType<typeof setTimeout> | null = null;
 
-	constructor(controller: QueryController, containerEl: HTMLElement) {
+	constructor(controller: QueryController, containerEl: HTMLElement, plugin: GanttBasesViewPlugin) {
 		super(controller);
 		this.scrollEl = containerEl;
 		this.rootEl = containerEl.createDiv('gbv-root');
+		this.plugin = plugin;
 
 		this._resizeObserver = new ResizeObserver((entries) => {
 			const width = entries[0]?.contentRect.width ?? 0;
@@ -79,8 +87,9 @@ export class GanttView extends BasesView {
 
 		container.empty();
 
-		const settings: GanttViewSettings = readSettings(config);
+		const settings: GanttViewSettings = readSettings(config, this.plugin.settings);
 		if (this._localZoom) settings.zoom = this._localZoom;
+		settings.colorBy = this._localColorBy;
 
 		// Derive property-gated visibility from the user-configured Bases properties.
 		// config.getOrder() reads the 'order:' array from the .base file and works
@@ -224,6 +233,21 @@ export class GanttView extends BasesView {
 
 		toolbar.createEl('div', { cls: 'gbv-toolbar-separator' });
 
+		// Color by dropdown
+		const colorByLabel = toolbar.createEl('span', { text: 'Color:', cls: 'gbv-toolbar-label' });
+		const colorBySelect = toolbar.createEl('select', { cls: 'gbv-toolbar-select' });
+		for (const opt of COLOR_BY_OPTIONS) {
+			const o = colorBySelect.createEl('option', { text: COLOR_BY_LABELS[opt] });
+			o.value = opt;
+			if (opt === this._localColorBy) o.selected = true;
+		}
+		colorBySelect.addEventListener('change', () => {
+			this._localColorBy = colorBySelect.value as ColorByField;
+			this._render();
+		});
+
+		toolbar.createEl('div', { cls: 'gbv-toolbar-separator' });
+
 		// Violation check button
 		const violationBtn = toolbar.createEl('button', {
 			text: violations.length > 0 ? `⚠ Fix Schedule (${violations.length})` : '✓ Schedule OK',
@@ -231,7 +255,7 @@ export class GanttView extends BasesView {
 		});
 		if (violations.length > 0) {
 			violationBtn.addEventListener('click', () => {
-				openViolationPanel(violations, this.app, () => this._render());
+				openViolationPanel(violations, this.app, () => this._render(), this.plugin.settings);
 			});
 		}
 
@@ -364,7 +388,7 @@ export class GanttView extends BasesView {
 				if (isAlt) labelEl.classList.add('gbv-sidebar-label--alt');
 				labelEl.style.cursor = 'pointer';
 				labelEl.addEventListener('click', () => {
-					openPopupEditor(task, labelEl, this.app, () => this._render());
+					openPopupEditor(task, labelEl, this.app, () => this._render(), this.plugin.settings);
 				});
 				sidebarInner.appendChild(labelEl);
 
@@ -375,11 +399,11 @@ export class GanttView extends BasesView {
 
 				const bounds = getTaskBarBounds(task, timelineConfig);
 				if (bounds) {
-					const barEl = createTaskBar(task, bounds, settings.colorBy, settings.showPriority);
+					const barEl = createTaskBar(task, bounds, settings.colorBy, settings.showPriority, this.plugin.settings);
 					barRowEl.appendChild(barEl);
 					barEl.addEventListener('click', (e) => {
 						e.stopPropagation();
-						openPopupEditor(task, barEl, this.app, () => this._render());
+						openPopupEditor(task, barEl, this.app, () => this._render(), this.plugin.settings);
 					});
 				}
 

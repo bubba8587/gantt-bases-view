@@ -5,6 +5,7 @@ import {
   MIN_BAR_LABEL_WIDTH,
   ColorByField,
   GanttTask,
+  type PluginSettings,
 } from './types.ts';
 import { getBarColor } from './colors.ts';
 
@@ -17,9 +18,10 @@ export function createTaskBar(
   bounds: { left: number; width: number },
   colorBy: ColorByField,
   showPriority = true,
+  pluginSettings?: PluginSettings,
 ): HTMLElement {
   if (task.isMilestone) {
-    return createMilestoneDiamond(task, bounds, colorBy);
+    return createMilestoneDiamond(task, bounds, colorBy, pluginSettings);
   }
 
   const bar = document.createElement('div');
@@ -35,6 +37,13 @@ export function createTaskBar(
   bar.style.top = `${BAR_MARGIN_TOP}px`;
   bar.style.height = `${BAR_HEIGHT}px`;
 
+  // Apply color when colorBy is set to status or priority
+  if (colorBy !== 'none') {
+    const color = getBarColor(task, colorBy, pluginSettings);
+    bar.style.background = `color-mix(in srgb, ${color} 25%, var(--background-secondary))`;
+    bar.style.borderColor = `color-mix(in srgb, ${color} 40%, var(--background-modifier-border))`;
+  }
+
   // Priority dot + label — only shown when bar is wide enough to be readable
   if (bounds.width >= MIN_BAR_LABEL_WIDTH) {
     if (showPriority) {
@@ -46,7 +55,7 @@ export function createTaskBar(
 
     const label = document.createElement('span');
     label.className = 'gbv-bar-label';
-    label.textContent = task.title;
+    label.textContent = task.title || task.file.basename;
     bar.appendChild(label);
   }
 
@@ -62,6 +71,7 @@ function createMilestoneDiamond(
   task: GanttTask,
   bounds: { left: number; width: number },
   colorBy: ColorByField,
+  pluginSettings?: PluginSettings,
 ): HTMLElement {
   const size = 14; // visual diamond size (px, before rotation)
   const el = document.createElement('div');
@@ -72,7 +82,7 @@ function createMilestoneDiamond(
   el.style.top = `${Math.round((ROW_HEIGHT - size) / 2)}px`;
   el.style.width = `${size}px`;
   el.style.height = `${size}px`;
-  el.style.backgroundColor = getBarColor(task, colorBy);
+  el.style.backgroundColor = getBarColor(task, colorBy, pluginSettings);
   return el;
 }
 
@@ -121,9 +131,8 @@ export function createSidebarLabel(task: GanttTask, hasViolation = false): HTMLE
   }
 
   const text = document.createElement('span');
-  text.textContent = task.title;
+  text.textContent = task.title || task.file.basename;
 
   label.appendChild(text);
   return label;
 }
-

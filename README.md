@@ -1,6 +1,6 @@
 # Gantt Bases View
 
-A Gantt chart custom view for [Obsidian Bases](https://obsidian.md/bases). Uses TaskNotes frontmatter by default — no changes needed to existing notes.
+A Gantt chart view for [Obsidian Bases](https://obsidian.md/bases). Works with [TaskNotes](https://github.com/callumalpass/tasknotes) frontmatter out of the box.
 
 ## Installation
 
@@ -8,60 +8,43 @@ Install via [BRAT](https://github.com/TfTHacker/obsidian42-brat): `jortscity/gan
 
 ## Frontmatter
 
-Standard TaskNotes fields (`scheduled`, `due`, `status`, `priority`) work automatically.
+Uses `scheduled`, `due`, `status`, and `priority` by default. Start/end date properties are configurable in plugin settings.
 
 ### Dependencies
 
-Each dependency type has its own frontmatter field — all plain wikilink arrays, same pattern as TaskNotes' `blockedBy`.
+Wikilink arrays, same pattern as TaskNotes' `blockedBy`:
 
 | Field | Type | Meaning |
 |-------|------|---------|
-| `blockedBy` | FS | This task starts after the predecessor **finishes** |
-| `syncStart` | SS | This task starts when the predecessor **starts** |
-| `syncFinish` | FF | This task finishes when the predecessor **finishes** |
-| `finishAfterStart` | SF | This task finishes after the predecessor **starts** |
+| `blockedBy` | FS | Starts after predecessor finishes |
+| `syncStart` | SS | Starts when predecessor starts |
+| `syncFinish` | FF | Finishes when predecessor finishes |
+| `finishAfterStart` | SF | Finishes after predecessor starts |
 
-```yaml
-blockedBy:
-  - "[[Task A]]"          # FS — I can't start until Task A is done
+Multiple predecessors per field are supported.
 
-syncStart:
-  - "[[Task B]]"          # SS — I start when Task B starts
+## Settings
 
-syncFinish:
-  - "[[Task C]]"          # FF — I finish when Task C finishes
+**Settings > Gantt Bases View**
 
-finishAfterStart:
-  - "[[Task D]]"          # SF — I finish after Task D has started
-```
+- **Start/end date property** — which frontmatter fields to use (defaults: `scheduled` / `due`)
+- **Status & priority options** — comma-separated lists for the edit popup dropdowns
+- **Sync from TaskNotes** — imports statuses, priorities, and their colors from TaskNotes automatically
 
-Multiple predecessors per field are fine. A note can use any combination of fields.
-
-TaskNotes' `blocking` field is not read (it's the reverse direction — use `blockedBy` on the successor instead).
-
-## View Options
-
-| Option | Values | Default |
-|--------|--------|---------|
-| Start date property | any property | `scheduled` |
-| End date property | any property | `due` |
-| Group by | none / projects / status / priority / contexts | none |
-| Zoom | Day / Week / Month (also in toolbar) | Week |
-| Color by | status / priority | status |
-| Show dependencies | toggle | on |
-| Show today marker | toggle | on |
+Values already used in your vault are appended to the dropdowns automatically.
 
 ## Toolbar
 
-- **Day / Week / Month** — switch zoom level without opening settings
-- **Today** — scroll timeline to today
-- **⚠ Fix Schedule (N)** — appears when dependency constraints are violated; shows suggested fixes
-- **Copy TSV** — tab-separated table for pasting into Excel
+- **Zoom** — Day / Week / Month / 1Y / 2Y / 3Y
+- **Today** — scroll to today
+- **Color** — color bars by status, priority, or none (colors sync from TaskNotes)
+- **Fix Schedule** — shows dependency violations with suggested fixes
+- **Copy TSV** — export for pasting into spreadsheets
 
-## Clicking tasks
+## Editing
 
-Click any task bar or the task name in the left column to edit dates, status, and priority, or open the note.
+Click any bar or sidebar label to edit dates, status, priority, and dependencies inline, or open the note.
 
-## Example notes
+## Example Notes
 
-**Settings > Gantt Bases View > Create examples** generates a `Gantt Examples/` folder with 5 linked notes covering all four dependency types. Create a Base pointing at that folder and switch to Gantt view.
+**Settings > Create examples** generates a `Gantt Examples/` folder with sample tasks covering all dependency types.

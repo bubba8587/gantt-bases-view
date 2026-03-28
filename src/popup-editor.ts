@@ -1,13 +1,15 @@
 import { AbstractInputSuggest, TFile } from 'obsidian';
 import type { App } from 'obsidian';
-import type { GanttTask } from './types.ts';
-import { DEP_FIELDS, stripWikilink } from './types.ts';
+import type { GanttTask, PluginSettings } from './types.ts';
+import { DEP_FIELDS, stripWikilink, DEFAULT_PLUGIN_SETTINGS } from './types.ts';
 import { formatDate } from './timeline.ts';
 
 /** Native Obsidian file-name autocomplete wired to a chips-style dep input. */
 class ChipFileSuggest extends AbstractInputSuggest<TFile> {
-	constructor(app: App, input: HTMLInputElement, private onSelect: (file: TFile) => void) {
+	private _onSelect: (file: TFile) => void;
+	constructor(app: App, input: HTMLInputElement, onSelect: (file: TFile) => void) {
 		super(app, input);
+		this._onSelect = onSelect;
 	}
 	getSuggestions(query: string): TFile[] {
 		const lower = query.toLowerCase();
@@ -19,24 +21,39 @@ class ChipFileSuggest extends AbstractInputSuggest<TFile> {
 		el.setText(file.basename);
 	}
 	selectSuggestion(file: TFile): void {
-		this.onSelect(file);
+		this._onSelect(file);
 		this.setValue('');
 		this.close();
 	}
 }
 
 /**
- * Reads the user-defined options for a property from Obsidian's metadata type
- * manager (undocumented but stable API used by the wider plugin community).
- * Falls back to `fallback` if the property isn't registered or has no options.
- * Always ensures `currentValue` is present in the returned list.
+ * Builds the dropdown options for a property.
+ * 1. Starts with the configured options from plugin settings.
+ * 2. Appends any additional values from Obsidian's metadata type manager
+ *    (which reflects values actually used in the vault).
+ * 3. Ensures currentValue is always present.
  */
-function getPropertyOptions(app: App, propertyName: string, fallback: string[], currentValue?: string): string[] {
-	const opts: string[] | undefined =
+function getPropertyOptions(app: App, propertyName: string, settingsOptions: string[], currentValue?: string): string[] {
+	const base = [...settingsOptions];
+
+	// Append values from the metadata type manager that aren't already in the list.
+	// Comparison is case-insensitive since Obsidian properties are case-insensitive.
+	const baseLower = new Set(base.map(s => s.toLowerCase()));
+
+	const metaOpts: string[] | undefined =
 		(app as any).metadataTypeManager?.properties?.[propertyName]?.options;
-	const base = opts && opts.length > 0 ? opts : fallback;
-	if (currentValue && !base.includes(currentValue)) {
-		return [...base, currentValue];
+	if (metaOpts && metaOpts.length > 0) {
+		for (const opt of metaOpts) {
+			if (!baseLower.has(opt.toLowerCase())) {
+				base.push(opt);
+				baseLower.add(opt.toLowerCase());
+			}
+		}
+	}
+
+	if (currentValue && !baseLower.has(currentValue.toLowerCase())) {
+		base.push(currentValue);
 	}
 	return base;
 }
@@ -99,7 +116,7 @@ function createSelect(options: string[], current: string): HTMLSelectElement {
 		const o = document.createElement('option');
 		o.value = opt;
 		o.textContent = opt;
-		if (opt === current) o.selected = true;
+		if (opt.toLowerCase() === current.toLowerCase()) o.selected = true;
 		sel.appendChild(o);
 	}
 	return sel;
@@ -110,6 +127,7 @@ export function openPopupEditor(
 	anchorEl: HTMLElement,
 	app: App,
 	onUpdate: () => void,
+	pluginSettings?: PluginSettings,
 ): void {
 	// Close any existing popup before opening a new one
 	closeActivePopup();
@@ -169,10 +187,12 @@ export function openPopupEditor(
 	popup.appendChild(dateRow);
 
 	// ── Status / Priority row (two columns) ──────────────────────────────────
-	const statusOptions = getPropertyOptions(app, 'status', ['to-do', 'in-progress', 'done', 'blocked'], task.status);
+	const statusFallback = pluginSettings?.statusOptions ?? DEFAULT_PLUGIN_SETTINGS.statusOptions;
+	const statusOptions = getPropertyOptions(app, 'status', statusFallback, task.status);
 	const statusSel = createSelect(statusOptions, task.status || statusOptions[0]);
 
-	const priorityOptions = getPropertyOptions(app, 'priority', ['low', 'medium', 'high'], task.priority);
+	const priorityFallback = pluginSettings?.priorityOptions ?? DEFAULT_PLUGIN_SETTINGS.priorityOptions;
+	const priorityOptions = getPropertyOptions(app, 'priority', priorityFallback, task.priority);
 	const prioritySel = createSelect(priorityOptions, task.priority || priorityOptions[0]);
 
 	const spRow = document.createElement('div');
@@ -372,16 +392,19 @@ export function openPopupEditor(
 			if (pending) depsByType[type].push(pending.startsWith('[[') ? pending : `[[${pending}]]`);
 		}
 
+		const startKey = pluginSettings?.startDateProp || DEFAULT_PLUGIN_SETTINGS.startDateProp;
+		const endKey = pluginSettings?.endDateProp || DEFAULT_PLUGIN_SETTINGS.endDateProp;
+
 		await (app.fileManager as any).processFrontMatter(task.file, (fm: Record<string, unknown>) => {
 			if (newStart) {
-				fm['scheduled'] = newStart;
+				fm[startKey] = newStart;
 			} else {
-				delete fm['scheduled'];
+				delete fm[startKey];
 			}
 			if (newEnd) {
-				fm['due'] = newEnd;
+				fm[endKey] = newEnd;
 			} else {
-				delete fm['due'];
+				delete fm[endKey];
 			}
 			fm['status'] = newStatus;
 			fm['priority'] = newPriority;

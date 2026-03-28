@@ -1,19 +1,36 @@
 import { Plugin, PluginSettingTab, App, Setting, Notice, TFolder } from 'obsidian';
 import { GanttView } from './gantt-view.ts';
 import { getViewOptions } from './options.ts';
+import type { PluginSettings } from './types.ts';
+import { DEFAULT_PLUGIN_SETTINGS, DEFAULT_STATUS_OPTIONS, DEFAULT_PRIORITY_OPTIONS } from './types.ts';
 
 export default class GanttBasesViewPlugin extends Plugin {
-	onload(): void {
+	settings: PluginSettings = { ...DEFAULT_PLUGIN_SETTINGS };
+
+	async onload(): Promise<void> {
+		await this.loadSettings();
+
 		this.registerBasesView('gantt', {
 			name: 'Gantt',
 			icon: 'bar-chart-horizontal',
-			factory: (controller, containerEl) => new GanttView(controller, containerEl),
+			factory: (controller, containerEl) => new GanttView(controller, containerEl, this),
 			options: (config) => getViewOptions(config),
 		});
 		this.addSettingTab(new GanttSettingsTab(this.app, this));
 	}
 
 	onunload(): void {}
+
+	async loadSettings(): Promise<void> {
+		const data = await this.loadData();
+		if (data) {
+			this.settings = { ...DEFAULT_PLUGIN_SETTINGS, ...data };
+		}
+	}
+
+	async saveSettings(): Promise<void> {
+		await this.saveData(this.settings);
+	}
 }
 
 class GanttSettingsTab extends PluginSettingTab {
@@ -25,6 +42,78 @@ class GanttSettingsTab extends PluginSettingTab {
 		const { containerEl } = this;
 		containerEl.empty();
 
+		containerEl.createEl('h3', { text: 'Property mapping' });
+
+		new Setting(containerEl)
+			.setName('Start date property')
+			.setDesc('Frontmatter property used for the task start date.')
+			.addText(text => {
+				text.setPlaceholder('scheduled')
+					.setValue(this.plugin.settings.startDateProp)
+					.onChange(async (value) => {
+						this.plugin.settings.startDateProp = value.trim() || DEFAULT_PLUGIN_SETTINGS.startDateProp;
+						await this.plugin.saveSettings();
+					});
+			});
+
+		new Setting(containerEl)
+			.setName('End date property')
+			.setDesc('Frontmatter property used for the task end date.')
+			.addText(text => {
+				text.setPlaceholder('due')
+					.setValue(this.plugin.settings.endDateProp)
+					.onChange(async (value) => {
+						this.plugin.settings.endDateProp = value.trim() || DEFAULT_PLUGIN_SETTINGS.endDateProp;
+						await this.plugin.saveSettings();
+					});
+			});
+
+		containerEl.createEl('h3', { text: 'Status & priority options' });
+
+		const statusSetting = new Setting(containerEl)
+			.setName('Status options')
+			.setDesc('Comma-separated list of status values for the dropdown.')
+			.addText(text => {
+				text.setPlaceholder(DEFAULT_STATUS_OPTIONS.join(', '))
+					.setValue(this.plugin.settings.statusOptions.join(', '))
+					.onChange(async (value) => {
+						const parsed = value.split(',').map(s => s.trim()).filter(Boolean);
+						this.plugin.settings.statusOptions = parsed.length > 0 ? parsed : DEFAULT_STATUS_OPTIONS;
+						await this.plugin.saveSettings();
+					});
+				text.inputEl.style.width = '100%';
+			});
+
+		const prioritySetting = new Setting(containerEl)
+			.setName('Priority options')
+			.setDesc('Comma-separated list of priority values for the dropdown.')
+			.addText(text => {
+				text.setPlaceholder(DEFAULT_PRIORITY_OPTIONS.join(', '))
+					.setValue(this.plugin.settings.priorityOptions.join(', '))
+					.onChange(async (value) => {
+						const parsed = value.split(',').map(s => s.trim()).filter(Boolean);
+						this.plugin.settings.priorityOptions = parsed.length > 0 ? parsed : DEFAULT_PRIORITY_OPTIONS;
+						await this.plugin.saveSettings();
+					});
+				text.inputEl.style.width = '100%';
+			});
+
+		new Setting(containerEl)
+			.setName('Sync from TaskNotes')
+			.setDesc('Import status and priority options from the TaskNotes plugin.')
+			.addButton(btn => {
+				btn.setButtonText('Sync')
+					.onClick(async () => {
+						const synced = this.syncFromTasknotes();
+						if (synced) {
+							await this.plugin.saveSettings();
+							this.display(); // refresh UI to show new values
+						}
+					});
+			});
+
+		containerEl.createEl('h3', { text: 'Examples' });
+
 		new Setting(containerEl)
 			.setName('Create example notes')
 			.setDesc('Creates a small set of linked notes in your vault demonstrating all four dependency types (FS, SS, FF, SF). Notes are placed in a "Gantt Examples" folder.')
@@ -33,6 +122,54 @@ class GanttSettingsTab extends PluginSettingTab {
 					.setCta()
 					.onClick(() => this.createExampleNotes());
 			});
+	}
+
+	private syncFromTasknotes(): boolean {
+		const tasknotes = (this.app as any).plugins?.plugins?.['tasknotes'];
+		if (!tasknotes) {
+			new Notice('TaskNotes plugin not found. Is it installed and enabled?');
+			return false;
+		}
+
+		const data = tasknotes.settings ?? tasknotes.data;
+		if (!data) {
+			new Notice('Could not read TaskNotes settings.');
+			return false;
+		}
+
+		let synced = false;
+
+		if (Array.isArray(data.customStatuses) && data.customStatuses.length > 0) {
+			this.plugin.settings.statusOptions = data.customStatuses.map(
+				(s: { value: string }) => s.value,
+			);
+			const colors: Record<string, string> = {};
+			for (const s of data.customStatuses) {
+				if (s.value && s.color) colors[s.value.toLowerCase()] = s.color;
+			}
+			this.plugin.settings.statusColors = colors;
+			synced = true;
+		}
+
+		if (Array.isArray(data.customPriorities) && data.customPriorities.length > 0) {
+			this.plugin.settings.priorityOptions = data.customPriorities.map(
+				(p: { value: string }) => p.value,
+			);
+			const colors: Record<string, string> = {};
+			for (const p of data.customPriorities) {
+				if (p.value && p.color) colors[p.value.toLowerCase()] = p.color;
+			}
+			this.plugin.settings.priorityColors = colors;
+			synced = true;
+		}
+
+		if (synced) {
+			new Notice('Synced status, priority, and colors from TaskNotes.');
+		} else {
+			new Notice('No custom statuses or priorities found in TaskNotes.');
+		}
+
+		return synced;
 	}
 
 	private async createExampleNotes(): Promise<void> {

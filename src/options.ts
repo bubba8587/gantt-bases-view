@@ -1,25 +1,11 @@
 import type { BasesViewConfig, BasesAllOptions } from 'obsidian';
 
 export function getViewOptions(_config: BasesViewConfig): BasesAllOptions[] {
+	// Note: Bases view options don't currently render UI controls.
+	// Zoom is handled by the plugin toolbar, colorBy by the toolbar dropdown,
+	// and date properties by plugin settings. These entries are kept for
+	// potential future Bases API support.
 	return [
-		{
-			type: 'optionGroup',
-			name: 'Data',
-			options: [
-				{
-					type: 'property',
-					name: 'Start date property',
-					key: 'startDateProp',
-					defaultValue: 'note.scheduled',
-				},
-				{
-					type: 'property',
-					name: 'End date property',
-					key: 'endDateProp',
-					defaultValue: 'note.due',
-				},
-			],
-		},
 		{
 			type: 'optionGroup',
 			name: 'Display',
@@ -30,13 +16,6 @@ export function getViewOptions(_config: BasesViewConfig): BasesAllOptions[] {
 					key: 'zoom',
 					options: ['day', 'week', 'month', '1year', '2year', '3year'],
 					defaultValue: 'week',
-				},
-				{
-					type: 'dropdown',
-					name: 'Color by',
-					key: 'colorBy',
-					options: ['status', 'priority'],
-					defaultValue: 'priority',
 				},
 				{
 					type: 'toggle',

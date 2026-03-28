@@ -1,16 +1,15 @@
 import type { BasesEntry, BasesPropertyId, BasesViewConfig } from 'obsidian';
-import type { GanttTask, TaskDependency, DependencyType, GanttViewSettings } from './types.ts';
-import { DEP_FIELDS, stripWikilink } from './types.ts';
+import type { GanttTask, TaskDependency, DependencyType, GanttViewSettings, PluginSettings } from './types.ts';
+import { DEP_FIELDS, stripWikilink, DEFAULT_PLUGIN_SETTINGS } from './types.ts';
 
-const DEFAULT_START_PROP: BasesPropertyId = 'note.scheduled';
-const DEFAULT_END_PROP: BasesPropertyId = 'note.due';
-
-export function readSettings(config: BasesViewConfig): GanttViewSettings {
+export function readSettings(config: BasesViewConfig, pluginSettings?: PluginSettings): GanttViewSettings {
+	const startProp = pluginSettings?.startDateProp || DEFAULT_PLUGIN_SETTINGS.startDateProp;
+	const endProp = pluginSettings?.endDateProp || DEFAULT_PLUGIN_SETTINGS.endDateProp;
 	return {
-		startDateProp: config.getAsPropertyId('startDateProp') ?? DEFAULT_START_PROP as BasesPropertyId,
-		endDateProp: config.getAsPropertyId('endDateProp') ?? DEFAULT_END_PROP as BasesPropertyId,
+		startDateProp: (`note.${startProp}`) as BasesPropertyId,
+		endDateProp: (`note.${endProp}`) as BasesPropertyId,
 		zoom: (config.get('zoom') as GanttViewSettings['zoom']) ?? 'week',
-		colorBy: (config.get('colorBy') as GanttViewSettings['colorBy']) ?? 'priority',
+		colorBy: 'none' as GanttViewSettings['colorBy'],
 		showDependencies: (config.get('showDependencies') as boolean) ?? true,
 		showToday: (config.get('showToday') as boolean) ?? true,
 		showPriority: true,
@@ -41,7 +40,9 @@ function parseNumber(value: unknown): number | null {
 
 function parseString(value: unknown): string {
 	if (value == null) return '';
-	return String(value).trim();
+	const str = String(value).trim();
+	if (str === 'null' || str === 'undefined') return '';
+	return str;
 }
 
 function parseArrayOfStrings(value: unknown): string[] {

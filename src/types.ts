@@ -87,7 +87,28 @@ export function stripWikilink(s: string): string {
 	return r.trim();
 }
 
-export type ColorByField = 'status' | 'priority';
+export type ColorByField = 'none' | 'status' | 'priority';
+
+export interface PluginSettings {
+	startDateProp: string;
+	endDateProp: string;
+	statusOptions: string[];
+	priorityOptions: string[];
+	statusColors: Record<string, string>;
+	priorityColors: Record<string, string>;
+}
+
+export const DEFAULT_STATUS_OPTIONS = ['to-do', 'in-progress', 'done', 'blocked'];
+export const DEFAULT_PRIORITY_OPTIONS = ['low', 'medium', 'high'];
+
+export const DEFAULT_PLUGIN_SETTINGS: PluginSettings = {
+	startDateProp: 'scheduled',
+	endDateProp: 'due',
+	statusOptions: DEFAULT_STATUS_OPTIONS,
+	priorityOptions: DEFAULT_PRIORITY_OPTIONS,
+	statusColors: {},
+	priorityColors: {},
+};
 
 export interface GanttViewSettings {
 	startDateProp: BasesPropertyId | null;

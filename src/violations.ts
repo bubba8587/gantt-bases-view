@@ -1,5 +1,5 @@
 import { App } from 'obsidian';
-import { GanttTask, TaskDependency } from './types.ts';
+import { GanttTask, TaskDependency, PluginSettings, DEFAULT_PLUGIN_SETTINGS } from './types.ts';
 import { formatDate } from './timeline.ts';
 
 export interface ScheduleViolation {
@@ -90,10 +90,12 @@ const DEP_VERBS: Record<string, [string, string]> = {
   SF: ['must finish after', 'starts'],
 };
 
-async function applyViolationFix(app: App, violation: ScheduleViolation): Promise<void> {
+async function applyViolationFix(app: App, violation: ScheduleViolation, pluginSettings?: PluginSettings): Promise<void> {
   const { targetTask, fixField, suggestedDate } = violation;
   const dateStr = formatDate(suggestedDate);
-  const frontmatterKey = fixField === 'start' ? 'scheduled' : 'due';
+  const startKey = pluginSettings?.startDateProp || DEFAULT_PLUGIN_SETTINGS.startDateProp;
+  const endKey = pluginSettings?.endDateProp || DEFAULT_PLUGIN_SETTINGS.endDateProp;
+  const frontmatterKey = fixField === 'start' ? startKey : endKey;
   await (app.fileManager as any).processFrontMatter(
     targetTask.file,
     (fm: Record<string, unknown>) => { fm[frontmatterKey] = dateStr; }
@@ -104,6 +106,7 @@ export function openViolationPanel(
   violations: ScheduleViolation[],
   app: App,
   onUpdate: () => void,
+  pluginSettings?: PluginSettings,
 ): void {
   closeViolationPanel();
 
@@ -185,7 +188,7 @@ export function openViolationPanel(
     applyBtn.className = 'gbv-violation-apply';
     applyBtn.textContent = 'Apply';
     applyBtn.addEventListener('click', async () => {
-      await applyViolationFix(app, violation);
+      await applyViolationFix(app, violation, pluginSettings);
       removeViolationRow(row, violation);
       onUpdate();
     });
@@ -209,7 +212,7 @@ export function openViolationPanel(
 
     applyAllBtn.addEventListener('click', async () => {
       for (const v of [...remainingViolations]) {
-        await applyViolationFix(app, v);
+        await applyViolationFix(app, v, pluginSettings);
       }
       onUpdate();
       closeViolationPanel();
