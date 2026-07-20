@@ -15,13 +15,27 @@ export interface DragDates {
 	newEnd: Date | null;
 }
 
-/** Applies a day-snapped drag to a task's dates. Null when nothing changes. */
+/** Which drag gestures a task's locks permit. */
+export function allowedDragModes(task: GanttTask): Record<DragMode, boolean> {
+	const { locks, startDate, endDate } = task;
+	return {
+		// Moving shifts every date the task has — blocked if any of them is locked.
+		'move': !(locks.start && startDate !== null) && !(locks.end && endDate !== null),
+		// Resizing changes that edge's date AND the duration.
+		'resize-start': !locks.start && !locks.duration,
+		'resize-end': !locks.end && !locks.duration,
+	};
+}
+
+/** Applies a day-snapped drag to a task's dates. Null when nothing changes
+ *  or the task's locks forbid the gesture. */
 export function applyDragToDates(
 	task: GanttTask,
 	mode: DragMode,
 	dayDelta: number,
 ): DragDates | null {
 	if (dayDelta === 0) return null;
+	if (!allowedDragModes(task)[mode]) return null;
 	const { startDate, endDate } = task;
 	const effective = getEffectiveBarDates(task);
 	if (!effective) return null;

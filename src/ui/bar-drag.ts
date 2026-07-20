@@ -1,7 +1,7 @@
 import type { App } from 'obsidian';
 import type { GanttTask, PluginSettings, TimelineConfig } from '../core/model.ts';
 import { DEFAULT_PLUGIN_SETTINGS } from '../core/model.ts';
-import { applyDragToDates, type DragMode, type DragDates } from '../core/drag.ts';
+import { applyDragToDates, allowedDragModes, type DragMode, type DragDates } from '../core/drag.ts';
 import { formatDate, getEffectiveBarDates } from '../core/timeline.ts';
 
 /** Pixels from a bar edge that count as a resize handle. */
@@ -23,15 +23,22 @@ export function consumePostDragClick(el: HTMLElement): boolean {
 	return false;
 }
 
-function modeForPointer(el: HTMLElement, clientX: number, resizable: boolean): DragMode {
-	if (!resizable) return 'move';
+/** The gesture for a pointer position, or null when locks forbid any gesture there. */
+function modeForPointer(
+	el: HTMLElement,
+	clientX: number,
+	resizable: boolean,
+	allowed: Record<DragMode, boolean>,
+): DragMode | null {
 	// Offset relative to the bar itself — e.offsetX would be relative to
 	// whichever child element (label, dot) the pointer happens to be over.
 	const rect = el.getBoundingClientRect();
 	const offsetX = clientX - rect.left;
-	if (offsetX <= EDGE_PX) return 'resize-start';
-	if (offsetX >= rect.width - EDGE_PX) return 'resize-end';
-	return 'move';
+	if (resizable) {
+		if (offsetX <= EDGE_PX && allowed['resize-start']) return 'resize-start';
+		if (offsetX >= rect.width - EDGE_PX && allowed['resize-end']) return 'resize-end';
+	}
+	return allowed['move'] ? 'move' : null;
 }
 
 function previewDates(task: GanttTask, mode: DragMode, dayDelta: number): { start: Date; end: Date } | null {
@@ -60,20 +67,21 @@ export function makeBarDraggable(
 	opts: { resizable: boolean },
 ): void {
 	let dragging = false;
+	const allowed = allowedDragModes(task);
 
-	// Hover cursor: resize at the edges, grab elsewhere.
+	// Hover cursor: resize at the edges, grab elsewhere, default when locked.
 	barEl.addEventListener('pointermove', (e: PointerEvent) => {
 		if (dragging) return;
-		const mode = modeForPointer(barEl, e.clientX, opts.resizable);
-		barEl.style.cursor = mode === 'move' ? 'grab' : 'ew-resize';
+		const mode = modeForPointer(barEl, e.clientX, opts.resizable, allowed);
+		barEl.style.cursor = mode === null ? '' : mode === 'move' ? 'grab' : 'ew-resize';
 	});
 
 	barEl.addEventListener('pointerdown', (e: PointerEvent) => {
 		if (e.button !== 0) return;
+		const mode = modeForPointer(barEl, e.clientX, opts.resizable, allowed);
+		if (mode === null) return; // locked — leave the click for the popup editor
 		e.preventDefault();
 		e.stopPropagation();
-
-		const mode = modeForPointer(barEl, e.clientX, opts.resizable);
 		const startClientX = e.clientX;
 		const origLeft = parseFloat(barEl.style.left) || 0;
 		const origWidth = parseFloat(barEl.style.width) || barEl.offsetWidth;

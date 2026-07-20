@@ -29,6 +29,19 @@ var import_obsidian7 = require("obsidian");
 var import_obsidian3 = require("obsidian");
 
 // src/core/model.ts
+var NO_LOCKS = Object.freeze({ start: false, end: false, duration: false });
+var LOCKS_FIELD = "ganttLocks";
+function parseLocks(values) {
+  const set = new Set(values.map((v) => v.toLowerCase()));
+  return {
+    start: set.has("start"),
+    end: set.has("end"),
+    duration: set.has("duration")
+  };
+}
+function locksToFrontmatter(locks) {
+  return ["start", "end", "duration"].filter((k) => locks[k]);
+}
 var ROW_HEIGHT = 36;
 var BAR_HEIGHT = 24;
 var BAR_MARGIN_TOP = 6;
@@ -162,6 +175,7 @@ function extractTask(entry, settings) {
   const title = parseString(entry.getValue("note.title")) || entry.file.basename;
   const timeEstimate = parseNumber(entry.getValue("note.timeEstimate"));
   const dependencies = parseDependencies(entry);
+  const locks = parseLocks(parseArrayOfStrings(entry.getValue(`note.${LOCKS_FIELD}`)));
   const isMilestone = startDate !== null && endDate === null && timeEstimate === null;
   return {
     id: entry.file.path,
@@ -175,6 +189,7 @@ function extractTask(entry, settings) {
     dependencies,
     timeEstimate,
     isMilestone,
+    locks,
     entry
   };
 }
@@ -436,33 +451,51 @@ function isViolated(dep, predecessor, successor) {
   return checkConstraint(dep.type, predecessor, successor) !== null;
 }
 function fixDatesFor(task, fixField, requiredDate) {
+  const locks = task.locks ?? NO_LOCKS;
+  const span = task.startDate && task.endDate ? Math.max(0, daysBetween(task.startDate, task.endDate)) : 0;
   if (fixField === "start") {
-    let newEnd = task.endDate;
-    if (task.startDate && task.endDate) {
-      const duration = Math.max(0, daysBetween(task.startDate, task.endDate));
-      newEnd = addDays(requiredDate, duration);
+    if (locks.start) return null;
+    if (!task.endDate || !locks.end) {
+      const newEnd = task.startDate && task.endDate ? addDays(requiredDate, span) : task.endDate;
+      return { newStart: requiredDate, newEnd };
     }
-    return { newStart: requiredDate, newEnd };
+    if (locks.duration) return null;
+    if (requiredDate > task.endDate) return null;
+    return { newStart: requiredDate, newEnd: task.endDate };
   }
-  return { newStart: task.startDate, newEnd: requiredDate };
+  if (locks.end) return null;
+  if (!locks.duration || !task.startDate) {
+    return { newStart: task.startDate, newEnd: requiredDate };
+  }
+  if (locks.start) return null;
+  return { newStart: addDays(requiredDate, -span), newEnd: requiredDate };
 }
 function planCascadingFixes(tasks) {
   const working = tasks.map((t) => ({ ...t }));
   const maxPasses = tasks.length + 1;
   let converged = false;
+  let lockedRemaining = 0;
   for (let pass = 0; pass < maxPasses; pass++) {
     const violations = detectViolations(working);
     if (violations.length === 0) {
       converged = true;
       break;
     }
+    let applied = 0;
     for (const v of violations) {
       const target = v.successor;
       const current = v.fixField === "start" ? target.startDate : target.endDate;
       if (current && current >= v.suggestedDate) continue;
-      const { newStart, newEnd } = fixDatesFor(target, v.fixField, v.suggestedDate);
-      target.startDate = newStart;
-      target.endDate = newEnd;
+      const fix = fixDatesFor(target, v.fixField, v.suggestedDate);
+      if (!fix) continue;
+      target.startDate = fix.newStart;
+      target.endDate = fix.newEnd;
+      applied++;
+    }
+    if (applied === 0) {
+      converged = true;
+      lockedRemaining = violations.length;
+      break;
     }
   }
   const fixes = /* @__PURE__ */ new Map();
@@ -473,7 +506,7 @@ function planCascadingFixes(tasks) {
       fixes.set(original.id, { task: original, newStart: updated.startDate, newEnd: updated.endDate });
     }
   }
-  return { fixes, converged };
+  return { fixes, converged, lockedRemaining };
 }
 function findDependencyCycles(tasks) {
   const taskById = new Map(tasks.map((t) => [t.id, t]));
@@ -697,6 +730,8 @@ function taskTooltip(task) {
   }
   const meta = [task.status, task.priority].filter(Boolean).join(" \xB7 ");
   if (meta) lines.push(meta);
+  const locked = locksToFrontmatter(task.locks);
+  if (locked.length) lines.push(`\u{1F512} ${locked.join(", ")}`);
   return lines.join("\n");
 }
 function createTaskBar(task, bounds, colorBy, showPriority = true, pluginSettings) {
@@ -726,6 +761,12 @@ function createTaskBar(task, bounds, colorBy, showPriority = true, pluginSetting
       dot.className = "gbv-priority-dot";
       if (task.priority) dot.dataset.priority = task.priority;
       bar.appendChild(dot);
+    }
+    if (locksToFrontmatter(task.locks).length > 0) {
+      const lockBadge = document.createElement("span");
+      lockBadge.className = "gbv-bar-lock";
+      lockBadge.textContent = "\u{1F512}";
+      bar.appendChild(lockBadge);
     }
     const label = document.createElement("span");
     label.className = "gbv-bar-label";
@@ -927,8 +968,19 @@ function renderDependencies(svg, tasks, taskRowMap, config, settings) {
 }
 
 // src/core/drag.ts
+function allowedDragModes(task) {
+  const { locks, startDate, endDate } = task;
+  return {
+    // Moving shifts every date the task has — blocked if any of them is locked.
+    "move": !(locks.start && startDate !== null) && !(locks.end && endDate !== null),
+    // Resizing changes that edge's date AND the duration.
+    "resize-start": !locks.start && !locks.duration,
+    "resize-end": !locks.end && !locks.duration
+  };
+}
 function applyDragToDates(task, mode, dayDelta) {
   if (dayDelta === 0) return null;
+  if (!allowedDragModes(task)[mode]) return null;
   const { startDate, endDate } = task;
   const effective = getEffectiveBarDates(task);
   if (!effective) return null;
@@ -964,13 +1016,14 @@ function consumePostDragClick(el) {
   }
   return false;
 }
-function modeForPointer(el, clientX, resizable) {
-  if (!resizable) return "move";
+function modeForPointer(el, clientX, resizable, allowed) {
   const rect = el.getBoundingClientRect();
   const offsetX = clientX - rect.left;
-  if (offsetX <= EDGE_PX) return "resize-start";
-  if (offsetX >= rect.width - EDGE_PX) return "resize-end";
-  return "move";
+  if (resizable) {
+    if (offsetX <= EDGE_PX && allowed["resize-start"]) return "resize-start";
+    if (offsetX >= rect.width - EDGE_PX && allowed["resize-end"]) return "resize-end";
+  }
+  return allowed["move"] ? "move" : null;
 }
 function previewDates(task, mode, dayDelta) {
   const effective = getEffectiveBarDates(task);
@@ -984,16 +1037,18 @@ function previewDates(task, mode, dayDelta) {
 }
 function makeBarDraggable(barEl, task, config, app, pluginSettings, opts) {
   let dragging = false;
+  const allowed = allowedDragModes(task);
   barEl.addEventListener("pointermove", (e) => {
     if (dragging) return;
-    const mode = modeForPointer(barEl, e.clientX, opts.resizable);
-    barEl.style.cursor = mode === "move" ? "grab" : "ew-resize";
+    const mode = modeForPointer(barEl, e.clientX, opts.resizable, allowed);
+    barEl.style.cursor = mode === null ? "" : mode === "move" ? "grab" : "ew-resize";
   });
   barEl.addEventListener("pointerdown", (e) => {
     if (e.button !== 0) return;
+    const mode = modeForPointer(barEl, e.clientX, opts.resizable, allowed);
+    if (mode === null) return;
     e.preventDefault();
     e.stopPropagation();
-    const mode = modeForPointer(barEl, e.clientX, opts.resizable);
     const startClientX = e.clientX;
     const origLeft = parseFloat(barEl.style.left) || 0;
     const origWidth = parseFloat(barEl.style.width) || barEl.offsetWidth;
@@ -1145,11 +1200,14 @@ function closeActivePopup() {
     activePopup = null;
   }
 }
-function createLabeledField(label, control) {
+function createLabeledField(label, control, labelExtra) {
   const row = document.createElement("div");
   row.className = "gbv-popup-field";
   const lbl = document.createElement("label");
-  lbl.textContent = label;
+  const text = document.createElement("span");
+  text.textContent = label;
+  lbl.appendChild(text);
+  if (labelExtra) lbl.appendChild(labelExtra);
   row.appendChild(lbl);
   row.appendChild(control);
   return row;
@@ -1192,17 +1250,94 @@ function openPopupEditor(task, anchorEl, app, onUpdate, pluginSettings) {
   titleRow.appendChild(titleEl);
   titleRow.appendChild(linkBtn);
   popup.appendChild(titleRow);
+  const locks = { ...task.locks };
   const startInput = document.createElement("input");
   startInput.type = "date";
   startInput.value = task.startDate ? formatDate(task.startDate) : "";
   const endInput = document.createElement("input");
   endInput.type = "date";
   endInput.value = task.endDate ? formatDate(task.endDate) : "";
+  const durationInput = document.createElement("input");
+  durationInput.type = "number";
+  durationInput.min = "1";
+  durationInput.placeholder = "days";
+  const readStart = () => parseDate(startInput.value);
+  const readEnd = () => parseDate(endInput.value);
+  const readDuration = () => {
+    const n = parseInt(durationInput.value, 10);
+    return Number.isFinite(n) && n >= 1 ? n : null;
+  };
+  const syncDurationDisplay = () => {
+    const s = readStart();
+    const e = readEnd();
+    durationInput.value = s && e ? String(Math.max(0, daysBetween(s, e)) + 1) : "";
+  };
+  syncDurationDisplay();
+  const refreshDisabled = () => {
+    startInput.disabled = locks.start || locks.end && locks.duration;
+    endInput.disabled = locks.end || locks.start && locks.duration;
+    durationInput.disabled = locks.duration || locks.start && locks.end;
+  };
+  const createLockToggle = (field, what) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "gbv-lock-btn";
+    const refreshIcon = () => {
+      (0, import_obsidian.setIcon)(btn, locks[field] ? "lock" : "lock-open");
+      btn.classList.toggle("is-locked", locks[field]);
+      const label = `${locks[field] ? "Unlock" : "Lock"} ${what}`;
+      btn.setAttribute("aria-label", label);
+      btn.title = label;
+    };
+    btn.addEventListener("click", () => {
+      locks[field] = !locks[field];
+      refreshIcon();
+      refreshDisabled();
+    });
+    refreshIcon();
+    return btn;
+  };
+  startInput.addEventListener("change", () => {
+    const s = readStart();
+    const d = readDuration();
+    if (locks.duration && s && d) {
+      endInput.value = formatDate(addDays(s, d - 1));
+    } else {
+      syncDurationDisplay();
+    }
+  });
+  endInput.addEventListener("change", () => {
+    const e = readEnd();
+    const d = readDuration();
+    if (locks.duration && e && d) {
+      startInput.value = formatDate(addDays(e, -(d - 1)));
+    } else {
+      syncDurationDisplay();
+    }
+  });
+  durationInput.addEventListener("change", () => {
+    const d = readDuration();
+    if (!d) {
+      syncDurationDisplay();
+      return;
+    }
+    const s = readStart();
+    const e = readEnd();
+    if (locks.end && e) {
+      startInput.value = formatDate(addDays(e, -(d - 1)));
+    } else if (s) {
+      endInput.value = formatDate(addDays(s, d - 1));
+    } else if (e) {
+      startInput.value = formatDate(addDays(e, -(d - 1)));
+    }
+  });
   const dateRow = document.createElement("div");
-  dateRow.className = "gbv-popup-row2";
-  dateRow.appendChild(createLabeledField("Start date", startInput));
-  dateRow.appendChild(createLabeledField("End date", endInput));
+  dateRow.className = "gbv-popup-row3";
+  dateRow.appendChild(createLabeledField("Start", startInput, createLockToggle("start", "start date")));
+  dateRow.appendChild(createLabeledField("End", endInput, createLockToggle("end", "end date")));
+  dateRow.appendChild(createLabeledField("Days", durationInput, createLockToggle("duration", "duration")));
   popup.appendChild(dateRow);
+  refreshDisabled();
   const statusFallback = pluginSettings?.statusOptions ?? DEFAULT_PLUGIN_SETTINGS.statusOptions;
   const statusOptions = getPropertyOptions(app, "status", statusFallback, task.status);
   const statusSel = createSelect(statusOptions, task.status || statusOptions[0]);
@@ -1377,6 +1512,12 @@ function openPopupEditor(task, anchorEl, app, onUpdate, pluginSettings) {
       }
       fm["status"] = newStatus;
       fm["priority"] = newPriority;
+      const lockList = locksToFrontmatter(locks);
+      if (lockList.length > 0) {
+        fm[LOCKS_FIELD] = lockList;
+      } else {
+        delete fm[LOCKS_FIELD];
+      }
       for (const [type, field] of Object.entries(DEP_TYPE_TO_FIELD)) {
         const names = depsByType[type];
         if (names.length > 0) {
@@ -1413,19 +1554,24 @@ async function writeTaskDates(app, file, newStart, newEnd, pluginSettings) {
 }
 async function applyViolationFix(app, violation, pluginSettings) {
   const { successor, fixField, suggestedDate } = violation;
-  const { newStart, newEnd } = fixDatesFor(successor, fixField, suggestedDate);
-  await writeTaskDates(app, successor.file, newStart, newEnd, pluginSettings);
+  const fix = fixDatesFor(successor, fixField, suggestedDate);
+  if (!fix) return;
+  await writeTaskDates(app, successor.file, fix.newStart, fix.newEnd, pluginSettings);
 }
 function fixHint(violation) {
   const { successor, fixField, suggestedDate } = violation;
-  let hint = `Suggested: move ${fixField} to ${formatDate(suggestedDate)}`;
-  if (fixField === "start") {
-    const { newEnd } = fixDatesFor(successor, fixField, suggestedDate);
-    if (newEnd && successor.endDate && newEnd.getTime() !== successor.endDate.getTime()) {
-      hint += ` (end follows to ${formatDate(newEnd)})`;
-    }
+  const fix = fixDatesFor(successor, fixField, suggestedDate);
+  if (!fix) {
+    return "\u{1F512} Locked \u2014 no automatic fix can move this task. Unlock it or adjust the dates manually.";
   }
-  return hint;
+  const parts = [];
+  if (fix.newStart && fix.newStart.getTime() !== successor.startDate?.getTime()) {
+    parts.push(`start \u2192 ${formatDate(fix.newStart)}`);
+  }
+  if (fix.newEnd && fix.newEnd.getTime() !== successor.endDate?.getTime()) {
+    parts.push(`end \u2192 ${formatDate(fix.newEnd)}`);
+  }
+  return parts.length ? `Suggested: ${parts.join(", ")}` : `Suggested: move ${fixField} to ${formatDate(suggestedDate)}`;
 }
 function openViolationPanel(violations, cycles, tasks, app, onUpdate, pluginSettings) {
   closeViolationPanel();
@@ -1517,17 +1663,25 @@ function openViolationPanel(violations, cycles, tasks, app, onUpdate, pluginSett
     subText.textContent = fixHint(violation);
     textBlock.appendChild(mainText);
     textBlock.appendChild(subText);
-    const applyBtn = document.createElement("button");
-    applyBtn.className = "gbv-violation-apply";
-    applyBtn.textContent = "Apply";
-    applyBtn.addEventListener("click", async () => {
-      await applyViolationFix(app, violation, pluginSettings);
-      removeViolationRow(row, violation);
-      onUpdate();
-    });
     row.appendChild(icon);
     row.appendChild(textBlock);
-    row.appendChild(applyBtn);
+    const fixable = fixDatesFor(violation.successor, violation.fixField, violation.suggestedDate) !== null;
+    if (fixable) {
+      const applyBtn = document.createElement("button");
+      applyBtn.className = "gbv-violation-apply";
+      applyBtn.textContent = "Apply";
+      applyBtn.addEventListener("click", async () => {
+        await applyViolationFix(app, violation, pluginSettings);
+        removeViolationRow(row, violation);
+        onUpdate();
+      });
+      row.appendChild(applyBtn);
+    } else {
+      const lockedTag = document.createElement("span");
+      lockedTag.className = "gbv-violation-locked";
+      lockedTag.textContent = "\u{1F512} Locked";
+      row.appendChild(lockedTag);
+    }
     rowsContainer.appendChild(row);
   }
   panel.appendChild(rowsContainer);
@@ -1545,6 +1699,10 @@ function openViolationPanel(violations, cycles, tasks, app, onUpdate, pluginSett
       }
       if (!plan.converged) {
         new import_obsidian2.Notice("Some conflicts could not be fully resolved \u2014 check for circular dependencies.");
+      } else if (plan.lockedRemaining > 0) {
+        new import_obsidian2.Notice(
+          `Updated ${plan.fixes.size} task${plan.fixes.size === 1 ? "" : "s"}; ${plan.lockedRemaining} conflict${plan.lockedRemaining === 1 ? "" : "s"} skipped (locked tasks).`
+        );
       } else if (plan.fixes.size > 0) {
         new import_obsidian2.Notice(`Updated ${plan.fixes.size} task${plan.fixes.size > 1 ? "s" : ""}.`);
       }
@@ -2266,6 +2424,30 @@ var EXAMPLE_NOTES = [
       "and Documentation (Apr 14\u201321). Both are violated, but Testing is",
       "the binding one: the fix should move start to Apr 29 (the day",
       "after Testing finishes), not Apr 22."
+    ].join("\n")
+  },
+  {
+    name: "GE-VendorWindow",
+    content: [
+      "---",
+      "title: Vendor Window",
+      "status: to-do",
+      "priority: medium",
+      "scheduled: 2026-04-10",
+      "due: 2026-04-14",
+      "ganttLocks:",
+      "  - start",
+      "  - end",
+      "projects:",
+      "  - Website Launch",
+      "blockedBy:",
+      '  - "[[GE-Development]]"',
+      "---",
+      "",
+      "**Locked task** \u2014 start and end are pinned via `ganttLocks`, so its",
+      "FS violation against Development (would need to start Apr 22) cannot",
+      "be auto-fixed. Fix Schedule shows it as \u{1F512} Locked, Apply All skips it,",
+      "and the bar cannot be dragged or resized."
     ].join("\n")
   },
   {

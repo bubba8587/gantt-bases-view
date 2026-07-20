@@ -1,4 +1,5 @@
-import type { GanttTask, TaskDependency, DependencyType } from './model.ts';
+import type { GanttTask, TaskDependency, DependencyType, TaskLocks } from './model.ts';
+import { NO_LOCKS } from './model.ts';
 import { addDays, daysBetween, formatDate } from './timeline.ts';
 
 /**
@@ -111,25 +112,45 @@ export function isViolated(
 }
 
 /**
- * The dates that satisfy one violation. Moving a start keeps the task's
- * duration by shifting the end with it (a plain start move could otherwise
- * push the start past the end); reversed-date tasks are normalized to a
- * zero-length task at the required date. Moving an end never touches the start.
+ * The dates that satisfy one violation, respecting the task's locks.
+ * Preferred shape: moving a start shifts the end with it (preserving
+ * duration; reversed dates are normalized to zero length), and moving an
+ * end leaves the start alone. When a lock forbids the preferred shape, the
+ * remaining free side absorbs the change instead — e.g. a start fix with a
+ * locked end shrinks the duration, and an end fix with a locked duration
+ * shifts the whole task. Returns null when no fix can satisfy the
+ * constraint without touching a locked field.
  */
 export function fixDatesFor(
-	task: Pick<GanttTask, 'startDate' | 'endDate'>,
+	task: Pick<GanttTask, 'startDate' | 'endDate'> & { locks?: TaskLocks },
 	fixField: 'start' | 'end',
 	requiredDate: Date,
-): { newStart: Date | null; newEnd: Date | null } {
+): { newStart: Date | null; newEnd: Date | null } | null {
+	const locks = task.locks ?? NO_LOCKS;
+	const span = task.startDate && task.endDate
+		? Math.max(0, daysBetween(task.startDate, task.endDate))
+		: 0;
+
 	if (fixField === 'start') {
-		let newEnd = task.endDate;
-		if (task.startDate && task.endDate) {
-			const duration = Math.max(0, daysBetween(task.startDate, task.endDate));
-			newEnd = addDays(requiredDate, duration);
+		if (locks.start) return null;
+		if (!task.endDate || !locks.end) {
+			// Shift the whole task, preserving duration.
+			const newEnd = task.startDate && task.endDate ? addDays(requiredDate, span) : task.endDate;
+			return { newStart: requiredDate, newEnd };
 		}
-		return { newStart: requiredDate, newEnd };
+		// End is locked: keep it and let the duration shrink.
+		if (locks.duration) return null;
+		if (requiredDate > task.endDate) return null; // can't start after a locked end
+		return { newStart: requiredDate, newEnd: task.endDate };
 	}
-	return { newStart: task.startDate, newEnd: requiredDate };
+
+	if (locks.end) return null;
+	if (!locks.duration || !task.startDate) {
+		return { newStart: task.startDate, newEnd: requiredDate };
+	}
+	// Duration is locked: shift the whole task so it ends on the required date.
+	if (locks.start) return null;
+	return { newStart: addDays(requiredDate, -span), newEnd: requiredDate };
 }
 
 export interface CascadePlan {
@@ -137,6 +158,8 @@ export interface CascadePlan {
 	fixes: Map<string, { task: GanttTask; newStart: Date | null; newEnd: Date | null }>;
 	/** False when the graph never settled (circular dependencies). */
 	converged: boolean;
+	/** Violations left standing because locks forbid every possible fix. */
+	lockedRemaining: number;
 }
 
 /**
@@ -150,12 +173,14 @@ export function planCascadingFixes(tasks: GanttTask[]): CascadePlan {
 	const maxPasses = tasks.length + 1;
 
 	let converged = false;
+	let lockedRemaining = 0;
 	for (let pass = 0; pass < maxPasses; pass++) {
 		const violations = detectViolations(working);
 		if (violations.length === 0) {
 			converged = true;
 			break;
 		}
+		let applied = 0;
 		for (const v of violations) {
 			// v.successor IS the working copy (detectViolations ran on `working`).
 			const target = v.successor;
@@ -164,9 +189,17 @@ export function planCascadingFixes(tasks: GanttTask[]): CascadePlan {
 			// updates monotonic so multi-dep tasks converge on the max.
 			const current = v.fixField === 'start' ? target.startDate : target.endDate;
 			if (current && current >= v.suggestedDate) continue;
-			const { newStart, newEnd } = fixDatesFor(target, v.fixField, v.suggestedDate);
-			target.startDate = newStart;
-			target.endDate = newEnd;
+			const fix = fixDatesFor(target, v.fixField, v.suggestedDate);
+			if (!fix) continue; // locked — leave it and keep cascading around it
+			target.startDate = fix.newStart;
+			target.endDate = fix.newEnd;
+			applied++;
+		}
+		if (applied === 0) {
+			// Nothing movable is left; every remaining violation is lock-blocked.
+			converged = true;
+			lockedRemaining = violations.length;
+			break;
 		}
 	}
 
@@ -179,7 +212,7 @@ export function planCascadingFixes(tasks: GanttTask[]): CascadePlan {
 			fixes.set(original.id, { task: original, newStart: updated.startDate, newEnd: updated.endDate });
 		}
 	}
-	return { fixes, converged };
+	return { fixes, converged, lockedRemaining };
 }
 
 /**

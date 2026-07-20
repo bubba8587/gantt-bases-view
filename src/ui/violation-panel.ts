@@ -30,23 +30,28 @@ async function writeTaskDates(
 	});
 }
 
-/** Applies one violation's fix, preserving the task's duration on start moves. */
+/** Applies one violation's lock-respecting fix. No-op when locks make it unfixable. */
 async function applyViolationFix(app: App, violation: ScheduleViolation, pluginSettings?: PluginSettings): Promise<void> {
 	const { successor, fixField, suggestedDate } = violation;
-	const { newStart, newEnd } = fixDatesFor(successor, fixField, suggestedDate);
-	await writeTaskDates(app, successor.file, newStart, newEnd, pluginSettings);
+	const fix = fixDatesFor(successor, fixField, suggestedDate);
+	if (!fix) return;
+	await writeTaskDates(app, successor.file, fix.newStart, fix.newEnd, pluginSettings);
 }
 
 function fixHint(violation: ScheduleViolation): string {
 	const { successor, fixField, suggestedDate } = violation;
-	let hint = `Suggested: move ${fixField} to ${formatDate(suggestedDate)}`;
-	if (fixField === 'start') {
-		const { newEnd } = fixDatesFor(successor, fixField, suggestedDate);
-		if (newEnd && successor.endDate && newEnd.getTime() !== successor.endDate.getTime()) {
-			hint += ` (end follows to ${formatDate(newEnd)})`;
-		}
+	const fix = fixDatesFor(successor, fixField, suggestedDate);
+	if (!fix) {
+		return '🔒 Locked — no automatic fix can move this task. Unlock it or adjust the dates manually.';
 	}
-	return hint;
+	const parts: string[] = [];
+	if (fix.newStart && fix.newStart.getTime() !== successor.startDate?.getTime()) {
+		parts.push(`start → ${formatDate(fix.newStart)}`);
+	}
+	if (fix.newEnd && fix.newEnd.getTime() !== successor.endDate?.getTime()) {
+		parts.push(`end → ${formatDate(fix.newEnd)}`);
+	}
+	return parts.length ? `Suggested: ${parts.join(', ')}` : `Suggested: move ${fixField} to ${formatDate(suggestedDate)}`;
 }
 
 export function openViolationPanel(
@@ -173,18 +178,26 @@ export function openViolationPanel(
 		textBlock.appendChild(mainText);
 		textBlock.appendChild(subText);
 
-		const applyBtn = document.createElement('button');
-		applyBtn.className = 'gbv-violation-apply';
-		applyBtn.textContent = 'Apply';
-		applyBtn.addEventListener('click', async () => {
-			await applyViolationFix(app, violation, pluginSettings);
-			removeViolationRow(row, violation);
-			onUpdate();
-		});
-
 		row.appendChild(icon);
 		row.appendChild(textBlock);
-		row.appendChild(applyBtn);
+
+		const fixable = fixDatesFor(violation.successor, violation.fixField, violation.suggestedDate) !== null;
+		if (fixable) {
+			const applyBtn = document.createElement('button');
+			applyBtn.className = 'gbv-violation-apply';
+			applyBtn.textContent = 'Apply';
+			applyBtn.addEventListener('click', async () => {
+				await applyViolationFix(app, violation, pluginSettings);
+				removeViolationRow(row, violation);
+				onUpdate();
+			});
+			row.appendChild(applyBtn);
+		} else {
+			const lockedTag = document.createElement('span');
+			lockedTag.className = 'gbv-violation-locked';
+			lockedTag.textContent = '🔒 Locked';
+			row.appendChild(lockedTag);
+		}
 		rowsContainer.appendChild(row);
 	}
 
@@ -209,6 +222,11 @@ export function openViolationPanel(
 			}
 			if (!plan.converged) {
 				new Notice('Some conflicts could not be fully resolved — check for circular dependencies.');
+			} else if (plan.lockedRemaining > 0) {
+				new Notice(
+					`Updated ${plan.fixes.size} task${plan.fixes.size === 1 ? '' : 's'}; ` +
+					`${plan.lockedRemaining} conflict${plan.lockedRemaining === 1 ? '' : 's'} skipped (locked tasks).`,
+				);
 			} else if (plan.fixes.size > 0) {
 				new Notice(`Updated ${plan.fixes.size} task${plan.fixes.size > 1 ? 's' : ''}.`);
 			}

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { applyDragToDates } from '../src/core/drag.ts';
+import { applyDragToDates, allowedDragModes } from '../src/core/drag.ts';
 import { makeTask } from './helpers.ts';
 
 const apr = (day: number) => new Date(2026, 3, day);
@@ -48,5 +48,38 @@ describe('applyDragToDates', () => {
 		// Apr 3 + 16h at 8h/day covers Apr 3–4 (inclusive); +2 days → end Apr 6.
 		const task = makeTask('t', { startDate: apr(3), timeEstimate: 16 * 60 });
 		expect(applyDragToDates(task, 'resize-end', 2)).toEqual({ newStart: null, newEnd: apr(6) });
+	});
+});
+
+describe('locks', () => {
+	const lock = (over: Partial<{ start: boolean; end: boolean; duration: boolean }>) =>
+		({ start: false, end: false, duration: false, ...over });
+
+	it('move is blocked when a present date is locked', () => {
+		const task = makeTask('t', { startDate: apr(3), endDate: apr(8), locks: lock({ start: true }) });
+		expect(applyDragToDates(task, 'move', 2)).toBeNull();
+		expect(allowedDragModes(task)['move']).toBe(false);
+
+		const endLocked = makeTask('t', { startDate: apr(3), endDate: apr(8), locks: lock({ end: true }) });
+		expect(applyDragToDates(endLocked, 'move', 2)).toBeNull();
+	});
+
+	it('a lock on an absent date does not block moving', () => {
+		// Deadline-only task: no start date exists, so a start lock is moot.
+		const task = makeTask('t', { endDate: apr(15), locks: lock({ start: true }) });
+		expect(applyDragToDates(task, 'move', -3)).toEqual({ newStart: null, newEnd: apr(12) });
+	});
+
+	it('duration lock allows moving but blocks both resizes', () => {
+		const task = makeTask('t', { startDate: apr(3), endDate: apr(8), locks: lock({ duration: true }) });
+		expect(applyDragToDates(task, 'move', 2)).toEqual({ newStart: apr(5), newEnd: apr(10) });
+		expect(applyDragToDates(task, 'resize-start', 1)).toBeNull();
+		expect(applyDragToDates(task, 'resize-end', 1)).toBeNull();
+	});
+
+	it('edge locks block only their own resize', () => {
+		const task = makeTask('t', { startDate: apr(3), endDate: apr(8), locks: lock({ start: true }) });
+		expect(applyDragToDates(task, 'resize-start', 1)).toBeNull();
+		expect(applyDragToDates(task, 'resize-end', 1)).toEqual({ newStart: null, newEnd: apr(9) });
 	});
 });

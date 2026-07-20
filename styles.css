@@ -1135,3 +1135,69 @@ body.gbv-bar-resizing * {
 .gbv-violation-row--cycle .gbv-violation-icon {
   color: var(--color-red, #e93147);
 }
+
+/* ── Popup — start/end/duration row with locks ─────────────── */
+.gbv-popup-row3 {
+  display: grid;
+  grid-template-columns: 1fr 1fr 0.75fr;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.gbv-popup-row3 .gbv-popup-field {
+  margin-bottom: 0;
+  min-width: 0;
+}
+
+.gbv-popup-field label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+}
+
+.gbv-popup-field input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.gbv-lock-btn {
+  background: none;
+  border: none;
+  padding: 0 2px;
+  cursor: pointer;
+  color: var(--text-faint);
+  display: inline-flex;
+  align-items: center;
+  height: 14px;
+}
+
+.gbv-lock-btn:hover {
+  color: var(--text-muted);
+}
+
+.gbv-lock-btn.is-locked {
+  color: var(--interactive-accent);
+}
+
+.gbv-lock-btn svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* ── Bar lock badge / locked violation rows ────────────────── */
+.gbv-bar-lock {
+  flex-shrink: 0;
+  font-size: 9px;
+  margin-left: 4px;
+  line-height: 1;
+  opacity: 0.8;
+}
+
+.gbv-violation-locked {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  align-self: center;
+}

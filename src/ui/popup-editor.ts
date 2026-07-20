@@ -1,8 +1,9 @@
 import { AbstractInputSuggest, TFile, setIcon } from 'obsidian';
 import type { App } from 'obsidian';
-import type { DependencyType, GanttTask, PluginSettings } from '../core/model.ts';
-import { DEP_TYPES, DEP_TYPE_TO_FIELD, stripWikilink, DEFAULT_PLUGIN_SETTINGS } from '../core/model.ts';
-import { formatDate } from '../core/timeline.ts';
+import type { DependencyType, GanttTask, PluginSettings, TaskLocks } from '../core/model.ts';
+import { DEP_TYPES, DEP_TYPE_TO_FIELD, LOCKS_FIELD, locksToFrontmatter, stripWikilink, DEFAULT_PLUGIN_SETTINGS } from '../core/model.ts';
+import { parseDate } from '../core/parse.ts';
+import { addDays, daysBetween, formatDate } from '../core/timeline.ts';
 
 /** Row labels that read as a sentence with the chips: "starts after [Task 2]". */
 const DEP_TYPE_ROW_LABELS: Record<DependencyType, string> = {
@@ -112,12 +113,15 @@ export function closeActivePopup(): void {
 	}
 }
 
-function createLabeledField(label: string, control: HTMLElement): HTMLElement {
+function createLabeledField(label: string, control: HTMLElement, labelExtra?: HTMLElement): HTMLElement {
 	const row = document.createElement('div');
 	row.className = 'gbv-popup-field';
 
 	const lbl = document.createElement('label');
-	lbl.textContent = label;
+	const text = document.createElement('span');
+	text.textContent = label;
+	lbl.appendChild(text);
+	if (labelExtra) lbl.appendChild(labelExtra);
 
 	row.appendChild(lbl);
 	row.appendChild(control);
@@ -179,7 +183,12 @@ export function openPopupEditor(
 	titleRow.appendChild(linkBtn);
 	popup.appendChild(titleRow);
 
-	// ── Dates row (two columns) ──────────────────────────────────────────────
+	// ── Dates row: start / end / duration, each with a lock toggle ───────────
+	// Locks pin sides of the start+duration=end triangle. Edits to unlocked
+	// fields keep the triangle consistent: with duration locked, moving one
+	// date drags the other along; editing duration recomputes the free date.
+	const locks: TaskLocks = { ...task.locks };
+
 	const startInput = document.createElement('input');
 	startInput.type = 'date';
 	startInput.value = task.startDate ? formatDate(task.startDate) : '';
@@ -188,11 +197,94 @@ export function openPopupEditor(
 	endInput.type = 'date';
 	endInput.value = task.endDate ? formatDate(task.endDate) : '';
 
+	const durationInput = document.createElement('input');
+	durationInput.type = 'number';
+	durationInput.min = '1';
+	durationInput.placeholder = 'days';
+
+	const readStart = () => parseDate(startInput.value);
+	const readEnd = () => parseDate(endInput.value);
+	const readDuration = () => {
+		const n = parseInt(durationInput.value, 10);
+		return Number.isFinite(n) && n >= 1 ? n : null;
+	};
+
+	const syncDurationDisplay = () => {
+		const s = readStart();
+		const e = readEnd();
+		durationInput.value = s && e ? String(Math.max(0, daysBetween(s, e)) + 1) : '';
+	};
+	syncDurationDisplay();
+
+	// A field is frozen when locked directly, or determined by the other two locks.
+	const refreshDisabled = () => {
+		startInput.disabled = locks.start || (locks.end && locks.duration);
+		endInput.disabled = locks.end || (locks.start && locks.duration);
+		durationInput.disabled = locks.duration || (locks.start && locks.end);
+	};
+
+	const createLockToggle = (field: keyof TaskLocks, what: string): HTMLButtonElement => {
+		const btn = document.createElement('button');
+		btn.type = 'button';
+		btn.className = 'gbv-lock-btn';
+		const refreshIcon = () => {
+			setIcon(btn, locks[field] ? 'lock' : 'lock-open');
+			btn.classList.toggle('is-locked', locks[field]);
+			const label = `${locks[field] ? 'Unlock' : 'Lock'} ${what}`;
+			btn.setAttribute('aria-label', label);
+			btn.title = label;
+		};
+		btn.addEventListener('click', () => {
+			locks[field] = !locks[field];
+			refreshIcon();
+			refreshDisabled();
+		});
+		refreshIcon();
+		return btn;
+	};
+
+	startInput.addEventListener('change', () => {
+		const s = readStart();
+		const d = readDuration();
+		if (locks.duration && s && d) {
+			endInput.value = formatDate(addDays(s, d - 1));
+		} else {
+			syncDurationDisplay();
+		}
+	});
+	endInput.addEventListener('change', () => {
+		const e = readEnd();
+		const d = readDuration();
+		if (locks.duration && e && d) {
+			startInput.value = formatDate(addDays(e, -(d - 1)));
+		} else {
+			syncDurationDisplay();
+		}
+	});
+	durationInput.addEventListener('change', () => {
+		const d = readDuration();
+		if (!d) {
+			syncDurationDisplay();
+			return;
+		}
+		const s = readStart();
+		const e = readEnd();
+		if (locks.end && e) {
+			startInput.value = formatDate(addDays(e, -(d - 1)));
+		} else if (s) {
+			endInput.value = formatDate(addDays(s, d - 1));
+		} else if (e) {
+			startInput.value = formatDate(addDays(e, -(d - 1)));
+		}
+	});
+
 	const dateRow = document.createElement('div');
-	dateRow.className = 'gbv-popup-row2';
-	dateRow.appendChild(createLabeledField('Start date', startInput));
-	dateRow.appendChild(createLabeledField('End date', endInput));
+	dateRow.className = 'gbv-popup-row3';
+	dateRow.appendChild(createLabeledField('Start', startInput, createLockToggle('start', 'start date')));
+	dateRow.appendChild(createLabeledField('End', endInput, createLockToggle('end', 'end date')));
+	dateRow.appendChild(createLabeledField('Days', durationInput, createLockToggle('duration', 'duration')));
 	popup.appendChild(dateRow);
+	refreshDisabled();
 
 	// ── Status / Priority row (two columns) ──────────────────────────────────
 	const statusFallback = pluginSettings?.statusOptions ?? DEFAULT_PLUGIN_SETTINGS.statusOptions;
@@ -425,6 +517,13 @@ export function openPopupEditor(
 			}
 			fm['status'] = newStatus;
 			fm['priority'] = newPriority;
+
+			const lockList = locksToFrontmatter(locks);
+			if (lockList.length > 0) {
+				fm[LOCKS_FIELD] = lockList;
+			} else {
+				delete fm[LOCKS_FIELD];
+			}
 
 			// Write dep fields; delete if empty.
 			// Names are stored as-is (already include [[...]] from the input).

@@ -1,6 +1,6 @@
 import type { BasesEntry, BasesPropertyId, BasesViewConfig } from 'obsidian';
 import type { GanttTask, TaskDependency, DependencyType, GanttViewSettings, PluginSettings } from './model.ts';
-import { DEP_FIELDS, stripWikilink, DEFAULT_PLUGIN_SETTINGS } from './model.ts';
+import { DEP_FIELDS, LOCKS_FIELD, parseLocks, stripWikilink, DEFAULT_PLUGIN_SETTINGS } from './model.ts';
 import { parseDate, parseNumber, parseString, parseArrayOfStrings } from './parse.ts';
 
 export function readSettings(config: BasesViewConfig, pluginSettings?: PluginSettings): GanttViewSettings {
@@ -45,6 +45,7 @@ export function extractTask(entry: BasesEntry, settings: GanttViewSettings): Gan
 	const title = parseString(entry.getValue('note.title' as BasesPropertyId)) || entry.file.basename;
 	const timeEstimate = parseNumber(entry.getValue('note.timeEstimate' as BasesPropertyId));
 	const dependencies = parseDependencies(entry);
+	const locks = parseLocks(parseArrayOfStrings(entry.getValue(`note.${LOCKS_FIELD}` as BasesPropertyId)));
 
 	// A milestone is a zero-duration point event: a start date with no end and
 	// no estimate. Same-day start/end is a 1-day task, not a milestone —
@@ -63,6 +64,7 @@ export function extractTask(entry: BasesEntry, settings: GanttViewSettings): Gan
 		dependencies,
 		timeEstimate,
 		isMilestone,
+		locks,
 		entry,
 	};
 }

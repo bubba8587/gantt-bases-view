@@ -12,6 +12,36 @@ export interface TaskDependency {
 	type: DependencyType;
 }
 
+/**
+ * Which sides of the start/end/duration triangle are pinned. Locked fields
+ * are never changed by any operation — drag, resize, popup edits, or
+ * violation fixes — and operations that can't satisfy their goal without
+ * touching a locked field are refused.
+ */
+export interface TaskLocks {
+	start: boolean;
+	end: boolean;
+	duration: boolean;
+}
+
+export const NO_LOCKS: Readonly<TaskLocks> = Object.freeze({ start: false, end: false, duration: false });
+
+/** Frontmatter property holding the lock list, e.g. `ganttLocks: [start, duration]`. */
+export const LOCKS_FIELD = 'ganttLocks';
+
+export function parseLocks(values: string[]): TaskLocks {
+	const set = new Set(values.map(v => v.toLowerCase()));
+	return {
+		start: set.has('start'),
+		end: set.has('end'),
+		duration: set.has('duration'),
+	};
+}
+
+export function locksToFrontmatter(locks: TaskLocks): string[] {
+	return (['start', 'end', 'duration'] as const).filter(k => locks[k]);
+}
+
 export interface GanttTask {
 	id: string;
 	file: TFile;
@@ -24,6 +54,7 @@ export interface GanttTask {
 	dependencies: TaskDependency[];
 	timeEstimate: number | null;
 	isMilestone: boolean;
+	locks: TaskLocks;
 	entry: BasesEntry;
 }
 

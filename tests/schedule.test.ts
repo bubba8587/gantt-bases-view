@@ -272,3 +272,53 @@ describe('findDependencyCycles', () => {
 		expect(findDependencyCycles([a, b, x, y])).toHaveLength(2);
 	});
 });
+
+describe('locks in fixDatesFor and cascades', () => {
+	const lock = (over: Partial<{ start: boolean; end: boolean; duration: boolean }>) =>
+		({ start: false, end: false, duration: false, ...over });
+
+	it('a locked field is never the one that moves', () => {
+		const startLocked = makeTask('t', { startDate: apr(15), endDate: apr(18), locks: lock({ start: true }) });
+		expect(fixDatesFor(startLocked, 'start', apr(29))).toBeNull();
+
+		const endLocked = makeTask('t', { startDate: apr(14), endDate: apr(17), locks: lock({ end: true }) });
+		expect(fixDatesFor(endLocked, 'end', apr(21))).toBeNull();
+	});
+
+	it('start fix with a locked end keeps the end and shrinks the duration', () => {
+		const task = makeTask('t', { startDate: apr(15), endDate: apr(18), locks: lock({ end: true }) });
+		expect(fixDatesFor(task, 'start', apr(16))).toEqual({ newStart: apr(16), newEnd: apr(18) });
+		// …but not past the locked end, and not when duration is locked too.
+		expect(fixDatesFor(task, 'start', apr(20))).toBeNull();
+		const frozen = makeTask('t', { startDate: apr(15), endDate: apr(18), locks: lock({ end: true, duration: true }) });
+		expect(fixDatesFor(frozen, 'start', apr(16))).toBeNull();
+	});
+
+	it('end fix with a locked duration shifts the whole task', () => {
+		const task = makeTask('t', { startDate: apr(14), endDate: apr(17), locks: lock({ duration: true }) });
+		expect(fixDatesFor(task, 'end', apr(21))).toEqual({ newStart: apr(18), newEnd: apr(21) });
+		const pinned = makeTask('t', { startDate: apr(14), endDate: apr(17), locks: lock({ duration: true, start: true }) });
+		expect(fixDatesFor(pinned, 'end', apr(21))).toBeNull();
+	});
+
+	it('cascades skip locked tasks but keep fixing around them', () => {
+		const a = makeTask('a', { startDate: apr(1), endDate: apr(10) });
+		// B violates its FS on A (needs to start Apr 11) but is fully pinned.
+		const b = makeTask('b', {
+			startDate: apr(5), endDate: apr(8),
+			locks: lock({ start: true, end: true }),
+			dependencies: [{ targetPath: 'a', targetName: '[[a]]', type: 'FS' as const }],
+		});
+		// C violates its FS on B (B ends Apr 8 → required Apr 9) and is free to move.
+		const c = makeTask('c', {
+			startDate: apr(8), endDate: apr(10),
+			dependencies: [{ targetPath: 'b', targetName: '[[b]]', type: 'FS' as const }],
+		});
+		const plan = planCascadingFixes([a, b, c]);
+		expect(plan.converged).toBe(true);
+		expect(plan.lockedRemaining).toBe(1);
+		expect(plan.fixes.has('b')).toBe(false);
+		// C is fixed relative to B's actual (locked) position, not B's ideal one.
+		expect(plan.fixes.get('c')).toMatchObject({ newStart: apr(9), newEnd: apr(11) });
+	});
+});

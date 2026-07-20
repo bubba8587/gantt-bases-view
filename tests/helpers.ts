@@ -1,5 +1,6 @@
 import type { TFile, BasesEntry } from 'obsidian';
 import type { GanttTask, TimelineConfig, ZoomLevel } from '../src/core/model.ts';
+import { NO_LOCKS } from '../src/core/model.ts';
 import { getPixelsPerDay } from '../src/core/timeline.ts';
 
 /** Builds a GanttTask with sensible defaults for tests. */
@@ -16,6 +17,7 @@ export function makeTask(id: string, overrides: Partial<GanttTask> = {}): GanttT
 		dependencies: [],
 		timeEstimate: null,
 		isMilestone: false,
+		locks: { ...NO_LOCKS },
 		entry: {} as BasesEntry,
 		...overrides,
 	};

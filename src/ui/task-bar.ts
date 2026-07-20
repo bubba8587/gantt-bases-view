@@ -9,6 +9,7 @@ import {
 } from '../core/model.ts';
 import { getBarColor } from './colors.ts';
 import { formatDate } from '../core/timeline.ts';
+import { locksToFrontmatter } from '../core/model.ts';
 
 interface BarBounds {
 	left: number;
@@ -24,6 +25,8 @@ function taskTooltip(task: GanttTask): string {
 	}
 	const meta = [task.status, task.priority].filter(Boolean).join(' · ');
 	if (meta) lines.push(meta);
+	const locked = locksToFrontmatter(task.locks);
+	if (locked.length) lines.push(`🔒 ${locked.join(', ')}`);
 	return lines.join('\n');
 }
 
@@ -70,6 +73,13 @@ export function createTaskBar(
 			dot.className = 'gbv-priority-dot';
 			if (task.priority) dot.dataset.priority = task.priority;
 			bar.appendChild(dot);
+		}
+
+		if (locksToFrontmatter(task.locks).length > 0) {
+			const lockBadge = document.createElement('span');
+			lockBadge.className = 'gbv-bar-lock';
+			lockBadge.textContent = '🔒';
+			bar.appendChild(lockBadge);
 		}
 
 		const label = document.createElement('span');

@@ -132,3 +132,15 @@ describe('groupDisplayLabel', () => {
 		expect(groupDisplayLabel('')).toBe('Ungrouped');
 	});
 });
+
+describe('locks parsing', () => {
+	it('reads ganttLocks case-insensitively and defaults to unlocked', () => {
+		const locked = extractTask(makeEntry('a.md', {
+			'note.scheduled': '2026-04-01', 'note.ganttLocks': ['Start', 'DURATION'],
+		}), settings);
+		expect(locked.locks).toEqual({ start: true, end: false, duration: true });
+
+		const plain = extractTask(makeEntry('b.md', { 'note.scheduled': '2026-04-01' }), settings);
+		expect(plain.locks).toEqual({ start: false, end: false, duration: false });
+	});
+});

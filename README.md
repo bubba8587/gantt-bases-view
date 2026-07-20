@@ -12,6 +12,17 @@ Uses `scheduled`, `due`, `status`, and `priority` by default. Start/end date pro
 
 Dates are **inclusive** all-day dates, per standard Gantt convention: a task with `due: 2026-08-14` occupies Aug 14 and finishes at the end of it, so a `blockedBy` successor can start Aug 15. A task scheduled and due the same day is a 1-day task; a note with only a start date (and no `timeEstimate`) is a zero-duration milestone, and tasks blocked by a milestone may start the same day it happens.
 
+### Locks
+
+`ganttLocks` pins sides of the start + duration = end triangle:
+
+```yaml
+ganttLocks:
+  - start      # any of: start, end, duration
+```
+
+Every operation respects locks: locked bars can't be dragged or resized past their pins, the edit popup disables pinned fields (with padlock toggles to change them), and schedule fixes route around locks — a start fix with a locked end shrinks the duration instead, an end fix with a locked duration shifts the whole task, and a task whose locks make its violation unsatisfiable is shown as 🔒 Locked and skipped by Apply All.
+
 ### Dependencies
 
 Wikilink arrays, same pattern as TaskNotes' `blockedBy`. Dependencies are declared on the **successor** — the linked notes are its **predecessors**. `blockedBy: [[Task A]]` in Task B means *Task B starts after Task A finishes*, and the arrow draws from Task A's finish to Task B's start.
@@ -45,7 +56,7 @@ Values already used in your vault are appended to the dropdowns automatically.
 
 ## Editing
 
-Click any bar or sidebar label to edit dates, status, priority, and dependencies inline, or open the note.
+Click any bar or sidebar label to edit dates, duration, status, priority, and dependencies inline, or open the note. Each of start, end, and duration has a padlock toggle; the duration field keeps the three consistent as you edit (with duration locked, moving one date drags the other along).
 
 Drag a bar to move the task in time, or drag its left/right edge to change just the start or end date — snapped to whole days and written straight to frontmatter. Dependency arrows run predecessor → successor (FS connects the predecessor's finish to the successor's start); hovering a bar highlights its full dependency chain — every transitive predecessor and successor, with the arrows along the way.
 
