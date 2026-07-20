@@ -7,6 +7,9 @@ on:
   push:
     tags:
       - "[0-9]+.[0-9]+.[0-9]+"
+  # Manual dispatch releases the manifest.json version from the chosen branch,
+  # creating the tag as part of the release.
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -31,24 +34,33 @@ jobs:
       - name: Test
         run: npm test
 
-      - name: Verify tag matches manifest version
-        run: |
-          manifest_version=$(node -p "require('./manifest.json').version")
-          if [ "$GITHUB_REF_NAME" != "$manifest_version" ]; then
-            echo "Tag $GITHUB_REF_NAME does not match manifest.json version $manifest_version" >&2
-            exit 1
-          fi
-
       - name: Create GitHub release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          manifest_version=$(node -p "require('./manifest.json').version")
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            # Tag push: the tag must match manifest.json exactly (BRAT requirement).
+            if [ "$GITHUB_REF_NAME" != "$manifest_version" ]; then
+              echo "Tag $GITHUB_REF_NAME does not match manifest.json version $manifest_version" >&2
+              exit 1
+            fi
+            version="$GITHUB_REF_NAME"
+            target_args=()
+          else
+            # Manual dispatch: release the manifest version, tagging this commit.
+            version="$manifest_version"
+            target_args=(--target "$GITHUB_SHA")
+          fi
+
           if [ -f RELEASE_NOTES.md ]; then
             notes_args=(--notes-file RELEASE_NOTES.md)
           else
             notes_args=(--generate-notes)
           fi
-          gh release create "$GITHUB_REF_NAME" \
-            --title "v$GITHUB_REF_NAME" \
+
+          gh release create "$version" \
+            --title "v$version" \
             "${notes_args[@]}" \
+            "${target_args[@]}" \
             main.js manifest.json styles.css
