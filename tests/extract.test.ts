@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { BasesViewConfig } from 'obsidian';
 import { extractTask, readSettings, resolveDependencyPaths } from '../src/core/extract.ts';
-import { stripWikilink } from '../src/core/model.ts';
+import { stripWikilink, groupDisplayLabel } from '../src/core/model.ts';
 import { makeEntry, makeTask } from './helpers.ts';
 
 function makeViewConfig(values: Record<string, unknown> = {}): BasesViewConfig {
@@ -113,5 +113,22 @@ describe('resolveDependencyPaths', () => {
 		expect(dev.dependencies[1].targetPath).toBe('Projects/GE-Design.md');
 		expect(dev.dependencies[2].targetPath).toBe('Projects/GE-Design.md');
 		expect(dev.dependencies[3].targetPath).toBe('');
+	});
+});
+
+describe('groupDisplayLabel', () => {
+	it('collapses folder paths to the last segment', () => {
+		expect(groupDisplayLabel('Projects/Clients/Acme')).toBe('Acme');
+		expect(groupDisplayLabel('Projects/Clients/Acme/')).toBe('Acme');
+	});
+
+	it('shows a wikilink group by its note name', () => {
+		expect(groupDisplayLabel('[[Projects/Website Launch]]')).toBe('Website Launch');
+		expect(groupDisplayLabel('[[Website Launch]]')).toBe('Website Launch');
+	});
+
+	it('passes plain values through and falls back for empty keys', () => {
+		expect(groupDisplayLabel('high')).toBe('high');
+		expect(groupDisplayLabel('')).toBe('Ungrouped');
 	});
 });

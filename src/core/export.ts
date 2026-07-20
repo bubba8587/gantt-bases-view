@@ -64,8 +64,8 @@ export function exportToTSV(groups: TaskGroup[], timelineConfig: TimelineConfig)
 
 	for (const group of groups) {
 		if (group.key) {
-			// Group header row — the key in the first cell, remaining data cells empty
-			lines.push(`${group.key}${'\t'.repeat(DATA_HEADERS.length - 1)}`);
+			// Group header row — display label in the first cell, remaining data cells empty
+			lines.push(`${group.label || group.key}${'\t'.repeat(DATA_HEADERS.length - 1)}`);
 		}
 		for (const task of group.tasks) {
 			const dataCols = [
@@ -111,7 +111,7 @@ const MARKDOWN_HEADER =
 export function exportToMarkdownTable(groups: TaskGroup[]): string {
 	const lines: string[] = [MARKDOWN_HEADER];
 	for (const group of groups) {
-		if (group.key) lines.push(`| **${escapeCell(group.key)}** | | | | | | |`);
+		if (group.key) lines.push(`| **${escapeCell(group.label || group.key)}** | | | | | | |`);
 		for (const task of group.tasks) lines.push(taskToMarkdownRow(task));
 	}
 	return lines.join('\n');

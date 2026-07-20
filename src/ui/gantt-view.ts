@@ -20,6 +20,7 @@ import {
 	MIN_TIMELINE_WIDTH,
 	ROW_HEIGHT,
 	SIDEBAR_WIDTH,
+	groupDisplayLabel,
 	stripWikilink,
 } from '../core/model.ts';
 import { readSettings, extractTask, resolveDependencyPaths } from '../core/extract.ts';
@@ -116,10 +117,16 @@ export class GanttView extends BasesView {
 
 		// Use Bases-native groupedData so the Bases group button drives grouping.
 		// When no group is configured, Bases returns one group with a null key.
-		const groups: TaskGroup[] = this.data.groupedData.map((g: BasesEntryGroup) => ({
-			key: g.hasKey() ? this.formatGroupKey(g.key!.toString()) : '',
-			tasks: g.entries.map(entry => extractTask(entry, settings)),
-		}));
+		const groups: TaskGroup[] = this.data.groupedData.map((g: BasesEntryGroup) => {
+			const raw = g.hasKey() ? g.key!.toString() : '';
+			// key = full identity (collapse state, exports); label = short display.
+			const key = raw ? (stripWikilink(raw) || 'Ungrouped') : '';
+			return {
+				key,
+				label: key ? groupDisplayLabel(raw) : '',
+				tasks: g.entries.map(entry => extractTask(entry, settings)),
+			};
+		});
 
 		// Flatten all tasks for dependency resolution (needs the full task graph)
 		const tasks: GanttTask[] = groups.flatMap(g => g.tasks);
@@ -258,10 +265,6 @@ export class GanttView extends BasesView {
 		};
 	}
 
-	private formatGroupKey(raw: string): string {
-		return stripWikilink(raw) || 'Ungrouped';
-	}
-
 	/**
 	 * Shades Saturday+Sunday bands at day and week zoom. One repeating
 	 * gradient (7-day period, phase-shifted to the first Saturday) instead of
@@ -398,7 +401,8 @@ export class GanttView extends BasesView {
 			this.render();
 		};
 
-		// Sidebar group header — caret + label, clickable
+		// Sidebar group header — caret + label, clickable. Shows the short
+		// label (folder name); the full path lives in the tooltip.
 		const sidebarHdr = document.createElement('div');
 		sidebarHdr.className = 'gbv-group-header';
 		sidebarHdr.style.height = `${GROUP_HEADER_HEIGHT}px`;
@@ -407,7 +411,9 @@ export class GanttView extends BasesView {
 		caret.className = 'gbv-group-caret';
 		caret.textContent = isCollapsed ? '▶' : '▼';
 		sidebarHdr.appendChild(caret);
-		sidebarHdr.appendChild(document.createTextNode(group.key));
+		const displayLabel = group.label || group.key;
+		sidebarHdr.appendChild(document.createTextNode(displayLabel));
+		if (displayLabel !== group.key) sidebarHdr.title = group.key;
 		sidebarHdr.addEventListener('click', toggle);
 		sidebarInner.appendChild(sidebarHdr);
 

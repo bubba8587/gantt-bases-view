@@ -28,7 +28,10 @@ export interface GanttTask {
 }
 
 export interface TaskGroup {
+	/** Full group identity (e.g. the complete folder path) — unique per group. */
 	key: string;
+	/** Short display label (e.g. just the folder name). Falls back to key. */
+	label?: string;
 	tasks: GanttTask[];
 }
 
@@ -101,6 +104,21 @@ export const DEP_TYPES: ReadonlyArray<DependencyType> = DEP_FIELDS.map(f => f.ty
 export const DEP_TYPE_TO_FIELD: Readonly<Record<DependencyType, string>> = Object.fromEntries(
 	DEP_FIELDS.map(f => [f.type, f.bare]),
 ) as Record<DependencyType, string>;
+
+/**
+ * Display label for a group key. Wikilinks are stripped, and path-like keys
+ * (folder grouping) collapse to their last segment — "Projects/Clients/Acme"
+ * reads as "Acme". The full key stays the group's identity and tooltip.
+ */
+export function groupDisplayLabel(rawKey: string): string {
+	const stripped = stripWikilink(rawKey);
+	if (!stripped) return 'Ungrouped';
+	if (stripped.includes('/')) {
+		const last = stripped.split('/').filter(Boolean).pop();
+		if (last) return last;
+	}
+	return stripped;
+}
 
 /** Strip [[…]] wikilink brackets and |alias suffix. */
 export function stripWikilink(s: string): string {

@@ -62,6 +62,15 @@ var DEP_TYPES = DEP_FIELDS.map((f) => f.type);
 var DEP_TYPE_TO_FIELD = Object.fromEntries(
   DEP_FIELDS.map((f) => [f.type, f.bare])
 );
+function groupDisplayLabel(rawKey) {
+  const stripped = stripWikilink(rawKey);
+  if (!stripped) return "Ungrouped";
+  if (stripped.includes("/")) {
+    const last = stripped.split("/").filter(Boolean).pop();
+    if (last) return last;
+  }
+  return stripped;
+}
 function stripWikilink(s) {
   let r = s.trim();
   if (r.startsWith("[[") && r.endsWith("]]")) r = r.slice(2, -2);
@@ -559,7 +568,7 @@ function exportToTSV(groups, timelineConfig) {
   const lines = [headerCells.join("	")];
   for (const group of groups) {
     if (group.key) {
-      lines.push(`${group.key}${"	".repeat(DATA_HEADERS.length - 1)}`);
+      lines.push(`${group.label || group.key}${"	".repeat(DATA_HEADERS.length - 1)}`);
     }
     for (const task of group.tasks) {
       const dataCols = [
@@ -1608,10 +1617,15 @@ var GanttView = class extends import_obsidian3.BasesView {
     if (this.localZoom) settings.zoom = this.localZoom;
     settings.colorBy = this.localColorBy;
     this.applyPropertyVisibility(config, settings);
-    const groups = this.data.groupedData.map((g) => ({
-      key: g.hasKey() ? this.formatGroupKey(g.key.toString()) : "",
-      tasks: g.entries.map((entry) => extractTask(entry, settings))
-    }));
+    const groups = this.data.groupedData.map((g) => {
+      const raw = g.hasKey() ? g.key.toString() : "";
+      const key = raw ? stripWikilink(raw) || "Ungrouped" : "";
+      return {
+        key,
+        label: key ? groupDisplayLabel(raw) : "",
+        tasks: g.entries.map((entry) => extractTask(entry, settings))
+      };
+    });
     const tasks = groups.flatMap((g) => g.tasks);
     resolveDependencyPaths(tasks);
     const violations = detectViolations(tasks);
@@ -1728,9 +1742,6 @@ var GanttView = class extends import_obsidian3.BasesView {
       endDate: addDays(timelineConfig.endDate, extraDays)
     };
   }
-  formatGroupKey(raw) {
-    return stripWikilink(raw) || "Ungrouped";
-  }
   /**
    * Shades Saturday+Sunday bands at day and week zoom. One repeating
    * gradient (7-day period, phase-shifted to the first Saturday) instead of
@@ -1836,7 +1847,9 @@ var GanttView = class extends import_obsidian3.BasesView {
     caret.className = "gbv-group-caret";
     caret.textContent = isCollapsed ? "\u25B6" : "\u25BC";
     sidebarHdr.appendChild(caret);
-    sidebarHdr.appendChild(document.createTextNode(group.key));
+    const displayLabel = group.label || group.key;
+    sidebarHdr.appendChild(document.createTextNode(displayLabel));
+    if (displayLabel !== group.key) sidebarHdr.title = group.key;
     sidebarHdr.addEventListener("click", toggle);
     sidebarInner.appendChild(sidebarHdr);
     const barsHdr = barsArea.createEl("div", { cls: "gbv-group-header" });
