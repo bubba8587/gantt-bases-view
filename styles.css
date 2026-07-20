@@ -1123,3 +1123,15 @@ body.gbv-bar-resizing * {
 .gbv-dep-arrow.is-active {
   opacity: 1 !important;
 }
+
+/* ── Dependency chain highlight (hover) ────────────────────── */
+.gbv-bar.gbv-bar--chain,
+.gbv-milestone.gbv-bar--chain {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 1px;
+}
+
+/* ── Circular dependency rows ──────────────────────────────── */
+.gbv-violation-row--cycle .gbv-violation-icon {
+  color: var(--color-red, #e93147);
+}

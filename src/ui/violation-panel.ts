@@ -51,6 +51,7 @@ function fixHint(violation: ScheduleViolation): string {
 
 export function openViolationPanel(
 	violations: ScheduleViolation[],
+	cycles: GanttTask[][],
 	tasks: GanttTask[],
 	app: App,
 	onUpdate: () => void,
@@ -67,7 +68,7 @@ export function openViolationPanel(
 	header.className = 'gbv-violation-header';
 
 	const headerTitle = document.createElement('span');
-	headerTitle.textContent = `⚠ Schedule Conflicts (${violations.length})`;
+	headerTitle.textContent = `⚠ Schedule Conflicts (${violations.length + cycles.length})`;
 
 	const closeBtn = document.createElement('button');
 	closeBtn.className = 'gbv-violation-close';
@@ -82,14 +83,55 @@ export function openViolationPanel(
 	const rowsContainer = document.createElement('div');
 	rowsContainer.className = 'gbv-violation-rows';
 
+	// Circular dependencies first — they're structural problems no date fix
+	// can satisfy, and they explain any confusing violations below them.
+	for (const cycle of cycles) {
+		const row = document.createElement('div');
+		row.className = 'gbv-violation-row gbv-violation-row--cycle';
+
+		const icon = document.createElement('span');
+		icon.className = 'gbv-violation-icon';
+		icon.textContent = '⟳';
+
+		const textBlock = document.createElement('div');
+		textBlock.className = 'gbv-violation-text';
+
+		const mainText = document.createElement('div');
+		mainText.className = 'gbv-violation-main';
+		const chain = [...cycle, cycle[0]]; // close the loop for display
+		chain.forEach((task, i) => {
+			if (i > 0) {
+				const arrow = document.createElement('span');
+				arrow.className = 'gbv-violation-muted';
+				arrow.textContent = ' ← ';
+				mainText.appendChild(arrow);
+			}
+			const chip = document.createElement('strong');
+			chip.className = 'gbv-violation-chip';
+			chip.textContent = task.title;
+			mainText.appendChild(chip);
+		});
+
+		const subText = document.createElement('div');
+		subText.className = 'gbv-violation-fix-hint';
+		subText.textContent =
+			'Circular dependency — these tasks wait on each other. Remove one link to make the schedule solvable.';
+
+		textBlock.appendChild(mainText);
+		textBlock.appendChild(subText);
+		row.appendChild(icon);
+		row.appendChild(textBlock);
+		rowsContainer.appendChild(row);
+	}
+
 	const remainingViolations = [...violations];
 
 	const removeViolationRow = (row: HTMLElement, violation: ScheduleViolation) => {
 		row.remove();
 		const idx = remainingViolations.indexOf(violation);
 		if (idx !== -1) remainingViolations.splice(idx, 1);
-		headerTitle.textContent = `⚠ Schedule Conflicts (${remainingViolations.length})`;
-		if (remainingViolations.length === 0) closeViolationPanel();
+		headerTitle.textContent = `⚠ Schedule Conflicts (${remainingViolations.length + cycles.length})`;
+		if (remainingViolations.length === 0 && cycles.length === 0) closeViolationPanel();
 	};
 
 	for (const violation of violations) {

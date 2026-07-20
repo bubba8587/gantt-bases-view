@@ -466,6 +466,42 @@ function planCascadingFixes(tasks) {
   }
   return { fixes, converged };
 }
+function findDependencyCycles(tasks) {
+  const taskById = new Map(tasks.map((t) => [t.id, t]));
+  const waitsOn = /* @__PURE__ */ new Map();
+  for (const task of tasks) {
+    const targets = task.dependencies.map((d) => d.targetPath).filter((p) => p && p !== task.id && taskById.has(p));
+    if (targets.length) waitsOn.set(task.id, [...new Set(targets)]);
+  }
+  const cycles = [];
+  const seenCycleKeys = /* @__PURE__ */ new Set();
+  const state = /* @__PURE__ */ new Map();
+  const stack = [];
+  const visit = (id) => {
+    state.set(id, "visiting");
+    stack.push(id);
+    for (const next of waitsOn.get(id) ?? []) {
+      const s = state.get(next);
+      if (s === "done") continue;
+      if (s === "visiting") {
+        const cycleIds = stack.slice(stack.indexOf(next));
+        const key = [...cycleIds].sort().join("\0");
+        if (!seenCycleKeys.has(key)) {
+          seenCycleKeys.add(key);
+          cycles.push(cycleIds.map((cid) => taskById.get(cid)));
+        }
+        continue;
+      }
+      visit(next);
+    }
+    stack.pop();
+    state.set(id, "done");
+  };
+  for (const task of tasks) {
+    if (!state.has(task.id)) visit(task.id);
+  }
+  return cycles;
+}
 function detectViolations(tasks) {
   const violations = [];
   const taskById = /* @__PURE__ */ new Map();
@@ -787,9 +823,37 @@ function ensureDefs(svg) {
 }
 function wireDependencyHover(barsArea, svg) {
   const setHighlight = (taskId) => {
-    for (const path of Array.from(svg.querySelectorAll("path.gbv-dep-arrow"))) {
-      const attached = taskId !== null && (path.getAttribute("data-pred") === taskId || path.getAttribute("data-succ") === taskId);
-      path.classList.toggle("is-active", attached);
+    const paths = Array.from(svg.querySelectorAll("path.gbv-dep-arrow"));
+    const chainPaths = /* @__PURE__ */ new Set();
+    const chainTasks = /* @__PURE__ */ new Set();
+    if (taskId !== null) {
+      chainTasks.add(taskId);
+      for (const dir of ["up", "down"]) {
+        const queue = [taskId];
+        const visited = new Set(queue);
+        while (queue.length) {
+          const id = queue.shift();
+          for (const path of paths) {
+            const pred = path.getAttribute("data-pred");
+            const succ = path.getAttribute("data-succ");
+            const next = dir === "up" ? succ === id ? pred : null : pred === id ? succ : null;
+            if (!next) continue;
+            chainPaths.add(path);
+            chainTasks.add(next);
+            if (!visited.has(next)) {
+              visited.add(next);
+              queue.push(next);
+            }
+          }
+        }
+      }
+    }
+    for (const path of paths) {
+      path.classList.toggle("is-active", chainPaths.has(path));
+    }
+    for (const el of Array.from(barsArea.querySelectorAll(".gbv-bar, .gbv-milestone"))) {
+      const id = el.dataset.taskId;
+      el.classList.toggle("gbv-bar--chain", taskId !== null && id !== void 0 && chainTasks.has(id));
     }
   };
   barsArea.addEventListener("pointerover", (e) => {
@@ -1354,7 +1418,7 @@ function fixHint(violation) {
   }
   return hint;
 }
-function openViolationPanel(violations, tasks, app, onUpdate, pluginSettings) {
+function openViolationPanel(violations, cycles, tasks, app, onUpdate, pluginSettings) {
   closeViolationPanel();
   const panel = document.createElement("div");
   panel.className = "gbv-violation-panel";
@@ -1362,7 +1426,7 @@ function openViolationPanel(violations, tasks, app, onUpdate, pluginSettings) {
   const header = document.createElement("div");
   header.className = "gbv-violation-header";
   const headerTitle = document.createElement("span");
-  headerTitle.textContent = `\u26A0 Schedule Conflicts (${violations.length})`;
+  headerTitle.textContent = `\u26A0 Schedule Conflicts (${violations.length + cycles.length})`;
   const closeBtn = document.createElement("button");
   closeBtn.className = "gbv-violation-close";
   closeBtn.textContent = "\u2715";
@@ -1372,13 +1436,45 @@ function openViolationPanel(violations, tasks, app, onUpdate, pluginSettings) {
   panel.appendChild(header);
   const rowsContainer = document.createElement("div");
   rowsContainer.className = "gbv-violation-rows";
+  for (const cycle of cycles) {
+    const row = document.createElement("div");
+    row.className = "gbv-violation-row gbv-violation-row--cycle";
+    const icon = document.createElement("span");
+    icon.className = "gbv-violation-icon";
+    icon.textContent = "\u27F3";
+    const textBlock = document.createElement("div");
+    textBlock.className = "gbv-violation-text";
+    const mainText = document.createElement("div");
+    mainText.className = "gbv-violation-main";
+    const chain = [...cycle, cycle[0]];
+    chain.forEach((task, i) => {
+      if (i > 0) {
+        const arrow = document.createElement("span");
+        arrow.className = "gbv-violation-muted";
+        arrow.textContent = " \u2190 ";
+        mainText.appendChild(arrow);
+      }
+      const chip = document.createElement("strong");
+      chip.className = "gbv-violation-chip";
+      chip.textContent = task.title;
+      mainText.appendChild(chip);
+    });
+    const subText = document.createElement("div");
+    subText.className = "gbv-violation-fix-hint";
+    subText.textContent = "Circular dependency \u2014 these tasks wait on each other. Remove one link to make the schedule solvable.";
+    textBlock.appendChild(mainText);
+    textBlock.appendChild(subText);
+    row.appendChild(icon);
+    row.appendChild(textBlock);
+    rowsContainer.appendChild(row);
+  }
   const remainingViolations = [...violations];
   const removeViolationRow = (row, violation) => {
     row.remove();
     const idx = remainingViolations.indexOf(violation);
     if (idx !== -1) remainingViolations.splice(idx, 1);
-    headerTitle.textContent = `\u26A0 Schedule Conflicts (${remainingViolations.length})`;
-    if (remainingViolations.length === 0) closeViolationPanel();
+    headerTitle.textContent = `\u26A0 Schedule Conflicts (${remainingViolations.length + cycles.length})`;
+    if (remainingViolations.length === 0 && cycles.length === 0) closeViolationPanel();
   };
   for (const violation of violations) {
     const row = document.createElement("div");
@@ -1519,7 +1615,11 @@ var GanttView = class extends import_obsidian3.BasesView {
     const tasks = groups.flatMap((g) => g.tasks);
     resolveDependencyPaths(tasks);
     const violations = detectViolations(tasks);
-    const violatingTaskIds = new Set(violations.map((v) => v.successor.id));
+    const cycles = findDependencyCycles(tasks);
+    const violatingTaskIds = /* @__PURE__ */ new Set([
+      ...violations.map((v) => v.successor.id),
+      ...cycles.flat().map((t) => t.id)
+    ]);
     let timelineConfig = computeTimelineRange(tasks, settings.zoom);
     timelineConfig = fitZoomToViewport(timelineConfig, this.availableTimelineWidth());
     timelineConfig = this.extendToFillViewport(timelineConfig);
@@ -1532,7 +1632,7 @@ var GanttView = class extends import_obsidian3.BasesView {
     renderToolbar(toolbar, {
       currentZoom: settings.zoom,
       colorBy: this.localColorBy,
-      violationCount: violations.length,
+      violationCount: violations.length + cycles.length,
       onZoomChange: (zoom) => {
         if (this.localZoom !== zoom) {
           this.scrollLeft = 0;
@@ -1550,7 +1650,7 @@ var GanttView = class extends import_obsidian3.BasesView {
         scrollArea.scrollLeft = Math.max(0, offset - scrollArea.clientWidth / 2);
       },
       onFixSchedule: () => {
-        openViolationPanel(violations, tasks, this.app, () => this.render(), this.plugin.settings);
+        openViolationPanel(violations, cycles, tasks, this.app, () => this.render(), this.plugin.settings);
       },
       onExport: async () => {
         await navigator.clipboard.writeText(exportToTSV(groups, timelineConfig));

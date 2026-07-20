@@ -182,6 +182,57 @@ export function planCascadingFixes(tasks: GanttTask[]): CascadePlan {
 	return { fixes, converged };
 }
 
+/**
+ * Finds circular dependency chains (A waits on B, B waits on A — directly or
+ * transitively). Cycles can't be scheduled and make violation fixes chase
+ * each other forever, so they're surfaced as their own kind of problem.
+ * Returns each distinct cycle once, as the tasks along it in order.
+ * Self-references are ignored (already dropped by constraint checks).
+ */
+export function findDependencyCycles(tasks: GanttTask[]): GanttTask[][] {
+	const taskById = new Map(tasks.map(t => [t.id, t]));
+	// Edges successor → predecessor ("waits on")
+	const waitsOn = new Map<string, string[]>();
+	for (const task of tasks) {
+		const targets = task.dependencies
+			.map(d => d.targetPath)
+			.filter(p => p && p !== task.id && taskById.has(p));
+		if (targets.length) waitsOn.set(task.id, [...new Set(targets)]);
+	}
+
+	const cycles: GanttTask[][] = [];
+	const seenCycleKeys = new Set<string>();
+	const state = new Map<string, 'visiting' | 'done'>();
+	const stack: string[] = [];
+
+	const visit = (id: string): void => {
+		state.set(id, 'visiting');
+		stack.push(id);
+		for (const next of waitsOn.get(id) ?? []) {
+			const s = state.get(next);
+			if (s === 'done') continue;
+			if (s === 'visiting') {
+				// Back edge — the cycle is the stack slice from `next` onward.
+				const cycleIds = stack.slice(stack.indexOf(next));
+				const key = [...cycleIds].sort().join(' ');
+				if (!seenCycleKeys.has(key)) {
+					seenCycleKeys.add(key);
+					cycles.push(cycleIds.map(cid => taskById.get(cid)!));
+				}
+				continue;
+			}
+			visit(next);
+		}
+		stack.pop();
+		state.set(id, 'done');
+	};
+
+	for (const task of tasks) {
+		if (!state.has(task.id)) visit(task.id);
+	}
+	return cycles;
+}
+
 export function detectViolations(tasks: GanttTask[]): ScheduleViolation[] {
 	const violations: ScheduleViolation[] = [];
 

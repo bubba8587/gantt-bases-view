@@ -58,15 +58,52 @@ function ensureDefs(svg: SVGSVGElement): void {
 }
 
 /**
- * Highlights the dependency arrows attached to whichever bar the pointer is
- * over. Delegated on the bars area so it survives arrow re-renders.
+ * Highlights the full dependency chain of whichever bar the pointer is over:
+ * every arrow and task reachable upstream (transitive predecessors) and
+ * downstream (transitive successors), not just direct links. The graph is
+ * read from the rendered arrows' data attributes, so this is delegated on
+ * the bars area and survives re-renders. Cycles are safe (visited sets).
  */
 export function wireDependencyHover(barsArea: HTMLElement, svg: SVGSVGElement): void {
 	const setHighlight = (taskId: string | null) => {
-		for (const path of Array.from(svg.querySelectorAll('path.gbv-dep-arrow'))) {
-			const attached = taskId !== null &&
-				(path.getAttribute('data-pred') === taskId || path.getAttribute('data-succ') === taskId);
-			path.classList.toggle('is-active', attached);
+		const paths = Array.from(svg.querySelectorAll('path.gbv-dep-arrow'));
+
+		const chainPaths = new Set<Element>();
+		const chainTasks = new Set<string>();
+
+		if (taskId !== null) {
+			chainTasks.add(taskId);
+			// BFS one direction at a time: upstream follows succ→pred edges,
+			// downstream follows pred→succ edges.
+			for (const dir of ['up', 'down'] as const) {
+				const queue = [taskId];
+				const visited = new Set(queue);
+				while (queue.length) {
+					const id = queue.shift()!;
+					for (const path of paths) {
+						const pred = path.getAttribute('data-pred');
+						const succ = path.getAttribute('data-succ');
+						const next = dir === 'up'
+							? (succ === id ? pred : null)
+							: (pred === id ? succ : null);
+						if (!next) continue;
+						chainPaths.add(path);
+						chainTasks.add(next);
+						if (!visited.has(next)) {
+							visited.add(next);
+							queue.push(next);
+						}
+					}
+				}
+			}
+		}
+
+		for (const path of paths) {
+			path.classList.toggle('is-active', chainPaths.has(path));
+		}
+		for (const el of Array.from(barsArea.querySelectorAll('.gbv-bar, .gbv-milestone'))) {
+			const id = (el as HTMLElement).dataset.taskId;
+			el.classList.toggle('gbv-bar--chain', taskId !== null && id !== undefined && chainTasks.has(id));
 		}
 	};
 

@@ -33,7 +33,7 @@ import {
 	getTaskBarBounds,
 	totalTimelineWidth,
 } from '../core/timeline.ts';
-import { detectViolations } from '../core/schedule.ts';
+import { detectViolations, findDependencyCycles } from '../core/schedule.ts';
 import { exportToTSV } from '../core/export.ts';
 import { buildGanttScaffold, setTimelineSize } from './scaffold.ts';
 import { renderToolbar } from './toolbar.ts';
@@ -125,7 +125,11 @@ export class GanttView extends BasesView {
 		const tasks: GanttTask[] = groups.flatMap(g => g.tasks);
 		resolveDependencyPaths(tasks);
 		const violations = detectViolations(tasks);
-		const violatingTaskIds = new Set(violations.map(v => v.successor.id));
+		const cycles = findDependencyCycles(tasks);
+		const violatingTaskIds = new Set([
+			...violations.map(v => v.successor.id),
+			...cycles.flat().map(t => t.id),
+		]);
 
 		let timelineConfig = computeTimelineRange(tasks, settings.zoom);
 		timelineConfig = fitZoomToViewport(timelineConfig, this.availableTimelineWidth());
@@ -144,7 +148,7 @@ export class GanttView extends BasesView {
 		renderToolbar(toolbar, {
 			currentZoom: settings.zoom,
 			colorBy: this.localColorBy,
-			violationCount: violations.length,
+			violationCount: violations.length + cycles.length,
 			onZoomChange: (zoom) => {
 				if (this.localZoom !== zoom) {
 					this.scrollLeft = 0;
@@ -162,7 +166,7 @@ export class GanttView extends BasesView {
 				scrollArea.scrollLeft = Math.max(0, offset - scrollArea.clientWidth / 2);
 			},
 			onFixSchedule: () => {
-				openViolationPanel(violations, tasks, this.app, () => this.render(), this.plugin.settings);
+				openViolationPanel(violations, cycles, tasks, this.app, () => this.render(), this.plugin.settings);
 			},
 			onExport: async () => {
 				await navigator.clipboard.writeText(exportToTSV(groups, timelineConfig));

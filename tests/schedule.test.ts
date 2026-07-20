@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { checkConstraint, detectViolations, isViolated, fixDatesFor, planCascadingFixes } from '../src/core/schedule.ts';
+import { checkConstraint, detectViolations, isViolated, fixDatesFor, planCascadingFixes, findDependencyCycles } from '../src/core/schedule.ts';
 import { makeTask } from './helpers.ts';
 import type { GanttTask, TaskDependency, DependencyType } from '../src/core/model.ts';
 
@@ -234,5 +234,41 @@ describe('planCascadingFixes', () => {
 		const plan = planCascadingFixes([a, b]);
 		expect(plan.converged).toBe(true);
 		expect(plan.fixes.size).toBe(0);
+	});
+});
+
+describe('findDependencyCycles', () => {
+	it('finds a two-task cycle once', () => {
+		const a = makeTask('a', { dependencies: [dep('b', 'FS')] });
+		const b = makeTask('b', { dependencies: [dep('a', 'FS')] });
+		const cycles = findDependencyCycles([a, b]);
+		expect(cycles).toHaveLength(1);
+		expect(cycles[0].map(t => t.id).sort()).toEqual(['a', 'b']);
+	});
+
+	it('finds longer cycles through transitive links', () => {
+		const a = makeTask('a', { dependencies: [dep('c', 'FS')] });
+		const b = makeTask('b', { dependencies: [dep('a', 'SS')] });
+		const c = makeTask('c', { dependencies: [dep('b', 'FF')] });
+		const cycles = findDependencyCycles([a, b, c]);
+		expect(cycles).toHaveLength(1);
+		expect(cycles[0].map(t => t.id).sort()).toEqual(['a', 'b', 'c']);
+	});
+
+	it('ignores chains, broken links, and self-references', () => {
+		const a = makeTask('a');
+		const b = makeTask('b', { dependencies: [dep('a', 'FS')] });
+		const c = makeTask('c', {
+			dependencies: [dep('b', 'FS'), dep('c', 'FS'), { targetPath: '', targetName: '[[x]]', type: 'FS' as const }],
+		});
+		expect(findDependencyCycles([a, b, c])).toEqual([]);
+	});
+
+	it('reports two independent cycles separately', () => {
+		const a = makeTask('a', { dependencies: [dep('b', 'FS')] });
+		const b = makeTask('b', { dependencies: [dep('a', 'FS')] });
+		const x = makeTask('x', { dependencies: [dep('y', 'SS')] });
+		const y = makeTask('y', { dependencies: [dep('x', 'SS')] });
+		expect(findDependencyCycles([a, b, x, y])).toHaveLength(2);
 	});
 });
