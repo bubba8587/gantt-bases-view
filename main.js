@@ -348,19 +348,23 @@ function generateColumns(config) {
   }
   return columns;
 }
+function getEffectiveBarDates(task) {
+  const { startDate, endDate, timeEstimate } = task;
+  if (!startDate && !endDate) return null;
+  if (startDate && !endDate) {
+    const days = timeEstimate ? Math.ceil(timeEstimate / (60 * 8)) : 1;
+    return { start: startDate, end: addDays(startDate, days) };
+  }
+  if (!startDate && endDate) {
+    return { start: addDays(endDate, -1), end: endDate };
+  }
+  return { start: startDate, end: endDate };
+}
 function getTaskBarBounds(task, config) {
-  let start = task.startDate;
-  let end = task.endDate;
-  if (!start && !end) return null;
-  if (start && !end) {
-    const days = task.timeEstimate ? Math.ceil(task.timeEstimate / (60 * 8)) : 1;
-    end = addDays(start, days);
-  }
-  if (!start && end) {
-    start = addDays(end, -1);
-  }
-  const left = dateToPixelOffset(start, config);
-  const right = dateToPixelOffset(end, config);
+  const dates = getEffectiveBarDates(task);
+  if (!dates) return null;
+  const left = dateToPixelOffset(dates.start, config);
+  const right = dateToPixelOffset(dates.end, config);
   const width = Math.max(right - left, config.pixelsPerDay);
   return { left, width };
 }
@@ -378,9 +382,21 @@ var DEP_VERBS = {
   FF: ["must finish after", "finishes"],
   SF: ["must finish after", "starts"]
 };
+function effectiveConstraintDate(task, which) {
+  if (which === "start") {
+    if (task.startDate) return task.startDate;
+    return task.endDate ? addDays(task.endDate, -1) : null;
+  }
+  if (task.endDate) return task.endDate;
+  if (task.startDate) {
+    return task.timeEstimate ? addDays(task.startDate, Math.ceil(task.timeEstimate / (60 * 8))) : task.startDate;
+  }
+  return null;
+}
 function checkConstraint(type, predecessor, successor) {
+  if (predecessor === successor) return null;
   const { fixField, boundTo } = CONSTRAINTS[type];
-  const requiredDate = boundTo === "start" ? predecessor.startDate : predecessor.endDate;
+  const requiredDate = effectiveConstraintDate(predecessor, boundTo);
   const actualDate = fixField === "start" ? successor.startDate : successor.endDate;
   if (!requiredDate || !actualDate) return null;
   return actualDate < requiredDate ? { fixField, requiredDate } : null;
@@ -656,10 +672,14 @@ var COLOR_NORMAL = "var(--text-muted)";
 var COLOR_VIOLATED = "var(--color-orange, #e8a427)";
 var ELBOW_GAP = 12;
 var ARROW_ANCHORS = {
-  FS: { fromRight: true, toRight: false },
-  SS: { fromRight: false, toRight: false },
-  FF: { fromRight: true, toRight: true },
-  SF: { fromRight: false, toRight: true }
+  FS: { fromPredRight: true, toSuccRight: false },
+  // pred finish → succ start
+  SS: { fromPredRight: false, toSuccRight: false },
+  // pred start  → succ start
+  FF: { fromPredRight: true, toSuccRight: true },
+  // pred finish → succ finish
+  SF: { fromPredRight: false, toSuccRight: true }
+  // pred start  → succ finish
 };
 function makeMarker(id, color) {
   const m = document.createElementNS("http://www.w3.org/2000/svg", "marker");
@@ -703,7 +723,7 @@ function renderDependencies(svg, tasks, taskRowMap, config, settings) {
     if (!successor.dependencies?.length) continue;
     const succRowTop = taskRowMap.get(successor.id);
     if (succRowTop === void 0) continue;
-    const succBarTop = succRowTop + BAR_MARGIN_TOP + 2;
+    const succBarBot = succRowTop + BAR_MARGIN_TOP + BAR_HEIGHT - 3;
     const succBounds = getTaskBarBounds(successor, config);
     if (!succBounds) continue;
     const succL = succBounds.left + 1;
@@ -712,22 +732,22 @@ function renderDependencies(svg, tasks, taskRowMap, config, settings) {
       if (!dep.targetPath) continue;
       if (!settings.visibleDepTypes.has(dep.type)) continue;
       const predecessor = taskById.get(dep.targetPath);
-      if (!predecessor) continue;
+      if (!predecessor || predecessor === successor) continue;
       const predRowTop = taskRowMap.get(predecessor.id);
       if (predRowTop === void 0) continue;
-      const predBarBot = predRowTop + BAR_MARGIN_TOP + BAR_HEIGHT - 3;
+      const predBarTop = predRowTop + BAR_MARGIN_TOP + 2;
       const predBounds = getTaskBarBounds(predecessor, config);
       if (!predBounds) continue;
       const predL = predBounds.left + 1;
       const predR = predBounds.left + predBounds.width - 1;
       const anchors = ARROW_ANCHORS[dep.type];
-      const sx = anchors.fromRight ? succR : succL;
-      const tx = anchors.toRight ? predR : predL;
+      const sx = anchors.fromPredRight ? predR : predL;
+      const tx = anchors.toSuccRight ? succR : succL;
       const violated = isViolated(dep, predecessor, successor);
       const color = violated ? COLOR_VIOLATED : COLOR_NORMAL;
       const marker = violated ? M_VIOL : M_NORM;
       const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-      path.setAttribute("d", buildPath(sx, succBarTop, tx, predBarBot, anchors.fromRight, anchors.toRight));
+      path.setAttribute("d", buildPath(sx, predBarTop, tx, succBarBot, anchors.fromPredRight, anchors.toSuccRight));
       path.setAttribute("fill", "none");
       path.setAttribute("stroke", color);
       path.setAttribute("stroke-width", violated ? "2" : "1.5");

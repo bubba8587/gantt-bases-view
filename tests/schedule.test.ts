@@ -48,11 +48,43 @@ describe('checkConstraint', () => {
 		expect(checkConstraint('SF', pred2, succ2)).toBeNull();
 	});
 
-	it('returns null when either side is missing the relevant date', () => {
-		const pred = makeTask('pred', { endDate: null, startDate: apr(1) });
-		const succ = makeTask('succ', { startDate: apr(5), endDate: apr(15) });
-		expect(checkConstraint('FS', pred, succ)).toBeNull();
+	it('milestone predecessors constrain by their single date', () => {
+		// Start-only milestone at Apr 7: FS successors must start Apr 7 or later.
+		const milestone = makeTask('kickoff', { startDate: apr(7), isMilestone: true });
+		const early = makeTask('early', { startDate: apr(5), endDate: apr(15) });
+		expect(checkConstraint('FS', milestone, early)).toEqual({ fixField: 'start', requiredDate: apr(7) });
+		expect(checkConstraint('FF', milestone, early)).toBeNull(); // early ends Apr 15 >= Apr 7
 
+		const onTime = makeTask('onTime', { startDate: apr(7), endDate: apr(15) });
+		expect(checkConstraint('FS', milestone, onTime)).toBeNull();
+	});
+
+	it('timeEstimate predecessors finish after their estimated workdays', () => {
+		// Apr 1 + 16h at 8h/day → finishes Apr 3.
+		const est = makeTask('est', { startDate: apr(1), timeEstimate: 16 * 60 });
+		const succ = makeTask('succ', { startDate: apr(2), endDate: apr(10) });
+		expect(checkConstraint('FS', est, succ)).toEqual({ fixField: 'start', requiredDate: apr(3) });
+	});
+
+	it('deadline-only predecessors start the day before their due date', () => {
+		const deadline = makeTask('deadline', { endDate: apr(15) });
+		const succ = makeTask('succ', { startDate: apr(10), endDate: apr(20) });
+		expect(checkConstraint('SS', deadline, succ)).toEqual({ fixField: 'start', requiredDate: apr(14) });
+	});
+
+	it('a task depending on itself is never a violation', () => {
+		const t = makeTask('t', { startDate: apr(5), endDate: apr(1) });
+		expect(checkConstraint('FS', t, t)).toBeNull();
+	});
+
+	it('returns null when a side has no usable date', () => {
+		// Predecessor with no dates at all can't constrain anything.
+		const dateless = makeTask('pred');
+		const succ = makeTask('succ', { startDate: apr(5), endDate: apr(15) });
+		expect(checkConstraint('FS', dateless, succ)).toBeNull();
+
+		// Successor without the constrained date is not flagged — we never
+		// invent successor dates just to report a violation on them.
 		const pred2 = makeTask('pred', { startDate: apr(1), endDate: apr(10) });
 		const succ2 = makeTask('succ', { startDate: null, endDate: apr(15) });
 		expect(checkConstraint('FS', pred2, succ2)).toBeNull();

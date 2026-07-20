@@ -1,5 +1,5 @@
 import type { GanttTask, TaskDependency, DependencyType } from './model.ts';
-import { formatDate } from './timeline.ts';
+import { addDays, formatDate } from './timeline.ts';
 
 /**
  * Dependency constraint semantics (MS Project conventions). The task that
@@ -44,16 +44,39 @@ export const DEP_VERBS: Record<DependencyType, [string, string]> = {
 };
 
 /**
+ * The date a PREDECESSOR constrains by, matching what its bar shows even when
+ * one side is missing: a milestone's finish is its own date, a timeEstimate
+ * task finishes after its estimated workdays, and a deadline-only task starts
+ * the day before its due date.
+ */
+export function effectiveConstraintDate(task: GanttTask, which: 'start' | 'end'): Date | null {
+	if (which === 'start') {
+		if (task.startDate) return task.startDate;
+		return task.endDate ? addDays(task.endDate, -1) : null;
+	}
+	if (task.endDate) return task.endDate;
+	if (task.startDate) {
+		return task.timeEstimate
+			? addDays(task.startDate, Math.ceil(task.timeEstimate / (60 * 8)))
+			: task.startDate; // milestone: finishes the moment it happens
+	}
+	return null;
+}
+
+/**
  * Evaluates one dependency. Returns the required date when the constraint is
  * violated, or null when it holds (or can't be evaluated for missing dates).
+ * The predecessor side uses effective dates (so e.g. milestones still
+ * constrain); the successor is only checked on dates it actually has.
  */
 export function checkConstraint(
 	type: DependencyType,
 	predecessor: GanttTask,
 	successor: GanttTask,
 ): { fixField: 'start' | 'end'; requiredDate: Date } | null {
+	if (predecessor === successor) return null;
 	const { fixField, boundTo } = CONSTRAINTS[type];
-	const requiredDate = boundTo === 'start' ? predecessor.startDate : predecessor.endDate;
+	const requiredDate = effectiveConstraintDate(predecessor, boundTo);
 	const actualDate = fixField === 'start' ? successor.startDate : successor.endDate;
 	if (!requiredDate || !actualDate) return null;
 	return actualDate < requiredDate ? { fixField, requiredDate } : null;

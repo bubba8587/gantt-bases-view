@@ -205,26 +205,38 @@ export function generateColumns(config: TimelineConfig): ColumnHeader[] {
 
 // ─── Bar geometry ────────────────────────────────────────────────────────────
 
+/**
+ * The dates a task's bar actually renders with, filling in the missing side:
+ * start-only tasks run 1 day (or their timeEstimate at 8h/day), deadline-only
+ * tasks get a 1-day bar ending on the due date. Null when the task has no
+ * dates at all.
+ */
+export function getEffectiveBarDates(
+	task: Pick<GanttTask, 'startDate' | 'endDate' | 'timeEstimate'>,
+): { start: Date; end: Date } | null {
+	const { startDate, endDate, timeEstimate } = task;
+	if (!startDate && !endDate) return null;
+
+	if (startDate && !endDate) {
+		// 8-hour workdays when a timeEstimate (minutes) is present; 1 day otherwise.
+		const days = timeEstimate ? Math.ceil(timeEstimate / (60 * 8)) : 1;
+		return { start: startDate, end: addDays(startDate, days) };
+	}
+	if (!startDate && endDate) {
+		return { start: addDays(endDate, -1), end: endDate };
+	}
+	return { start: startDate!, end: endDate! };
+}
+
 export function getTaskBarBounds(
 	task: GanttTask,
 	config: TimelineConfig,
 ): { left: number; width: number } | null {
-	let start = task.startDate;
-	let end = task.endDate;
+	const dates = getEffectiveBarDates(task);
+	if (!dates) return null;
 
-	if (!start && !end) return null;
-
-	if (start && !end) {
-		// 8-hour workdays when a timeEstimate (minutes) is present; 1 day otherwise.
-		const days = task.timeEstimate ? Math.ceil(task.timeEstimate / (60 * 8)) : 1;
-		end = addDays(start, days);
-	}
-	if (!start && end) {
-		start = addDays(end, -1); // deadline-only: 1-day bar ending on the due date
-	}
-
-	const left = dateToPixelOffset(start!, config);
-	const right = dateToPixelOffset(end!, config);
+	const left = dateToPixelOffset(dates.start, config);
+	const right = dateToPixelOffset(dates.end, config);
 	// Reversed dates (start after end) still get a minimum-width bar, never negative.
 	const width = Math.max(right - left, config.pixelsPerDay);
 
