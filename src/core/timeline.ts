@@ -48,10 +48,35 @@ export function getPixelsPerDay(zoom: ZoomLevel): number {
 		case 'day':    return 40;
 		case 'week':   return 12;
 		case 'month':  return 3;
+		// Fallback densities for the year zooms — normally replaced by
+		// fitZoomToViewport, which scales them to the actual viewport width.
 		case '1year':  return 1;
 		case '2year':  return 0.5;
 		case '3year':  return 0.34;
 	}
+}
+
+/** Years the viewport should span for a zoom level, or null for the
+ *  fixed-density zooms (day/week/month). */
+export function viewportYearSpan(zoom: ZoomLevel): number | null {
+	switch (zoom) {
+		case '1year': return 1;
+		case '2year': return 2;
+		case '3year': return 3;
+		default: return null;
+	}
+}
+
+/**
+ * The year zooms promise "N years visible at once": scale pixelsPerDay so N
+ * years fill the viewport exactly. With a fixed density, any viewport wider
+ * than N years × pixelsPerDay would get padded out to fill the width — on a
+ * typical monitor that made "2Y" show ~6 years and "3Y" show ~9.
+ */
+export function fitZoomToViewport(config: TimelineConfig, availableWidth: number): TimelineConfig {
+	const years = viewportYearSpan(config.zoom);
+	if (!years || availableWidth <= 0) return config;
+	return { ...config, pixelsPerDay: availableWidth / (years * 365.25) };
 }
 
 export function computeTimelineRange(tasks: GanttTask[], zoom: ZoomLevel): TimelineConfig {

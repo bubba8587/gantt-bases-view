@@ -28,6 +28,7 @@ import {
 	columnsWidth,
 	computeTimelineRange,
 	dateToPixelOffset,
+	fitZoomToViewport,
 	generateColumns,
 	getTaskBarBounds,
 	totalTimelineWidth,
@@ -127,6 +128,7 @@ export class GanttView extends BasesView {
 		const violatingTaskIds = new Set(violations.map(v => v.successor.id));
 
 		let timelineConfig = computeTimelineRange(tasks, settings.zoom);
+		timelineConfig = fitZoomToViewport(timelineConfig, this.availableTimelineWidth());
 		timelineConfig = this.extendToFillViewport(timelineConfig);
 
 		const columns = generateColumns(timelineConfig);
@@ -226,13 +228,20 @@ export class GanttView extends BasesView {
 		);
 	}
 
+	/**
+	 * Width available for the timeline: container minus sidebar and its resize
+	 * handle border. Uses containerEl so we don't depend on scrollArea layout
+	 * (which hasn't happened yet at this point in JS execution).
+	 */
+	private availableTimelineWidth(): number {
+		return Math.max(MIN_TIMELINE_WIDTH,
+			(this.scrollEl.clientWidth || 0) - this.sidebarWidth - 2,
+		);
+	}
+
 	/** Extends the timeline end date so the chart always fills the visible area. */
 	private extendToFillViewport(timelineConfig: TimelineConfig): TimelineConfig {
-		// Using containerEl width minus sidebar so we don't depend on scrollArea
-		// layout (which hasn't happened yet at this point in JS execution).
-		const availableWidth = Math.max(MIN_TIMELINE_WIDTH,
-			(this.scrollEl.clientWidth || 0) - this.sidebarWidth - 2, // -2 for sidebar resize handle border
-		);
+		const availableWidth = this.availableTimelineWidth();
 		const contentWidth = totalTimelineWidth(timelineConfig);
 		if (contentWidth >= availableWidth) return timelineConfig;
 

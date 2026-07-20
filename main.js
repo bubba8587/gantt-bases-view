@@ -222,6 +222,8 @@ function getPixelsPerDay(zoom) {
       return 12;
     case "month":
       return 3;
+    // Fallback densities for the year zooms — normally replaced by
+    // fitZoomToViewport, which scales them to the actual viewport width.
     case "1year":
       return 1;
     case "2year":
@@ -229,6 +231,23 @@ function getPixelsPerDay(zoom) {
     case "3year":
       return 0.34;
   }
+}
+function viewportYearSpan(zoom) {
+  switch (zoom) {
+    case "1year":
+      return 1;
+    case "2year":
+      return 2;
+    case "3year":
+      return 3;
+    default:
+      return null;
+  }
+}
+function fitZoomToViewport(config, availableWidth) {
+  const years = viewportYearSpan(config.zoom);
+  if (!years || availableWidth <= 0) return config;
+  return { ...config, pixelsPerDay: availableWidth / (years * 365.25) };
 }
 function computeTimelineRange(tasks, zoom) {
   const now = /* @__PURE__ */ new Date();
@@ -1483,6 +1502,7 @@ var GanttView = class extends import_obsidian3.BasesView {
     const violations = detectViolations(tasks);
     const violatingTaskIds = new Set(violations.map((v) => v.successor.id));
     let timelineConfig = computeTimelineRange(tasks, settings.zoom);
+    timelineConfig = fitZoomToViewport(timelineConfig, this.availableTimelineWidth());
     timelineConfig = this.extendToFillViewport(timelineConfig);
     const columns = generateColumns(timelineConfig);
     const totalWidth = columnsWidth(columns);
@@ -1565,13 +1585,20 @@ var GanttView = class extends import_obsidian3.BasesView {
       DEP_FIELDS.filter((f) => visibleProps.has(f.prop) || visibleProps.has(f.bare)).map((f) => f.type)
     );
   }
-  /** Extends the timeline end date so the chart always fills the visible area. */
-  extendToFillViewport(timelineConfig) {
-    const availableWidth = Math.max(
+  /**
+   * Width available for the timeline: container minus sidebar and its resize
+   * handle border. Uses containerEl so we don't depend on scrollArea layout
+   * (which hasn't happened yet at this point in JS execution).
+   */
+  availableTimelineWidth() {
+    return Math.max(
       MIN_TIMELINE_WIDTH,
       (this.scrollEl.clientWidth || 0) - this.sidebarWidth - 2
-      // -2 for sidebar resize handle border
     );
+  }
+  /** Extends the timeline end date so the chart always fills the visible area. */
+  extendToFillViewport(timelineConfig) {
+    const availableWidth = this.availableTimelineWidth();
     const contentWidth = totalTimelineWidth(timelineConfig);
     if (contentWidth >= availableWidth) return timelineConfig;
     const extraDays = Math.ceil(

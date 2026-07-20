@@ -7,6 +7,7 @@
   - Fixes that move a start date now shift the end date with it, preserving the task's duration (no more fixes that push a start past its own due date)
   - **Apply All cascades**: fixing one task ripples through the tasks that depend on it until the whole schedule is consistent, with circular dependencies detected and reported
   - Milestones and estimate-only tasks now constrain their successors (a task `blockedBy` a milestone is checked against the milestone's date)
+- **Year zooms fit the window** — 1Y/2Y/3Y now scale to your viewport so exactly that many years are visible at once (previously a wide window showed ~3× the years, e.g. 6 years at "2Y")
 - **Weekend shading** at day and week zoom, with weekend day headers dimmed
 - **Bar tooltips** — hover any bar or milestone for its title, dates, status, and priority
 

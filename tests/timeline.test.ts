@@ -4,6 +4,7 @@ import {
 	columnsWidth,
 	daysBetween,
 	dateToPixelOffset,
+	fitZoomToViewport,
 	formatDate,
 	generateColumns,
 	getPixelsPerDay,
@@ -52,6 +53,30 @@ describe('dateToPixelOffset', () => {
 		const config = makeConfig(new Date(2026, 2, 1), new Date(2026, 2, 20), 'day');
 		const noon = new Date(2026, 2, 2, 12, 0, 0);
 		expect(dateToPixelOffset(noon, config)).toBe(40 + 20);
+	});
+});
+
+describe('fitZoomToViewport', () => {
+	it('scales year zooms so exactly N years span the viewport width', () => {
+		// Regression: with the fixed fallback densities, a ~1100px viewport
+		// showed ~3 years at "1Y", ~6 at "2Y", and ~9 at "3Y".
+		const viewport = 1100;
+		for (const [zoom, years] of [['1year', 1], ['2year', 2], ['3year', 3]] as const) {
+			const base = makeConfig(new Date(2026, 0, 1), new Date(2033, 0, 1), zoom);
+			const fitted = fitZoomToViewport(base, viewport);
+			const nYearsLater = new Date(2026 + years, 0, 1);
+			// N years from the start lands at the right edge of the viewport (±5px
+			// for leap-year drift against the 365.25-day average).
+			expect(Math.abs(dateToPixelOffset(nYearsLater, fitted) - viewport)).toBeLessThanOrEqual(5);
+		}
+	});
+
+	it('leaves fixed-density zooms and zero-width viewports unchanged', () => {
+		const day = makeConfig(new Date(2026, 0, 1), new Date(2026, 5, 1), 'day');
+		expect(fitZoomToViewport(day, 1100)).toEqual(day);
+
+		const year = makeConfig(new Date(2026, 0, 1), new Date(2027, 0, 1), '2year');
+		expect(fitZoomToViewport(year, 0)).toEqual(year);
 	});
 });
 
