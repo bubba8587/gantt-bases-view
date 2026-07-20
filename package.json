@@ -1,11 +1,14 @@
 {
 	"name": "gantt-bases-view",
-	"version": "1.1.0",
+	"version": "1.2.0",
 	"description": "A Gantt chart custom view for Obsidian Bases",
 	"main": "main.js",
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
-		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
+		"typecheck": "tsc -noEmit -skipLibCheck",
+		"build": "npm run typecheck && node esbuild.config.mjs production",
+		"test": "vitest run",
+		"test:watch": "vitest",
 		"deploy": "bash deploy.sh"
 	},
 	"keywords": [
@@ -23,6 +26,7 @@
 		"esbuild": "0.24.0",
 		"obsidian": "latest",
 		"tslib": "2.8.0",
-		"typescript": "^5.5.0"
+		"typescript": "^5.5.0",
+		"vitest": "^4.1.10"
 	}
 }

@@ -1,9 +1,13 @@
 import type { TFile, BasesEntry, BasesPropertyId } from 'obsidian';
 
+// ─── Task model ──────────────────────────────────────────────────────────────
+
 export type DependencyType = 'FS' | 'SS' | 'FF' | 'SF';
 
 export interface TaskDependency {
+	/** Resolved vault path of the predecessor task ('' when unresolved). */
 	targetPath: string;
+	/** Raw frontmatter value, e.g. "[[GE-Design]]". */
 	targetName: string;
 	type: DependencyType;
 }
@@ -23,6 +27,13 @@ export interface GanttTask {
 	entry: BasesEntry;
 }
 
+export interface TaskGroup {
+	key: string;
+	tasks: GanttTask[];
+}
+
+// ─── Timeline model ──────────────────────────────────────────────────────────
+
 export type ZoomLevel = 'day' | 'week' | 'month' | '1year' | '2year' | '3year';
 
 export interface TimelineConfig {
@@ -33,15 +44,18 @@ export interface TimelineConfig {
 }
 
 export interface ColumnHeader {
+	/** Top-row band label (month for day zoom, year otherwise). */
+	group: string;
+	/** Bottom-row cell label (day number, W15, Apr, Q2, …). */
 	label: string;
+	/** First day covered by the column (inclusive). */
 	startDate: Date;
+	/** Day after the last day covered by the column (exclusive). */
+	endDateExclusive: Date;
 	widthPx: number;
 }
 
-export interface TaskGroup {
-	key: string;
-	tasks: GanttTask[];
-}
+// ─── Layout constants ────────────────────────────────────────────────────────
 
 export const ROW_HEIGHT = 36;
 export const BAR_HEIGHT = 24;
@@ -54,6 +68,8 @@ export const MIN_TIMELINE_WIDTH = 400;
 export const MIN_BAR_LABEL_WIDTH = 50;
 export const MIN_SIDEBAR_WIDTH = 120;
 export const MAX_SIDEBAR_WIDTH = 520;
+
+// ─── Colors ──────────────────────────────────────────────────────────────────
 
 export const STATUS_COLORS: Record<string, string> = {
 	'to-do': 'var(--gbv-status-todo, #868e96)',
@@ -70,6 +86,8 @@ export const PRIORITY_COLORS: Record<string, string> = {
 
 export const DEFAULT_BAR_COLOR = 'var(--gbv-bar-default, #339af0)';
 
+// ─── Dependency fields ───────────────────────────────────────────────────────
+
 /** Single source of truth for dependency type ↔ frontmatter field mapping. */
 export const DEP_FIELDS: ReadonlyArray<{ bare: string; prop: string; type: DependencyType }> = [
 	{ bare: 'blockedBy',        prop: 'note.blockedBy',        type: 'FS' },
@@ -77,6 +95,12 @@ export const DEP_FIELDS: ReadonlyArray<{ bare: string; prop: string; type: Depen
 	{ bare: 'syncFinish',       prop: 'note.syncFinish',       type: 'FF' },
 	{ bare: 'finishAfterStart', prop: 'note.finishAfterStart', type: 'SF' },
 ];
+
+export const DEP_TYPES: ReadonlyArray<DependencyType> = DEP_FIELDS.map(f => f.type);
+
+export const DEP_TYPE_TO_FIELD: Readonly<Record<DependencyType, string>> = Object.fromEntries(
+	DEP_FIELDS.map(f => [f.type, f.bare]),
+) as Record<DependencyType, string>;
 
 /** Strip [[…]] wikilink brackets and |alias suffix. */
 export function stripWikilink(s: string): string {
@@ -86,6 +110,8 @@ export function stripWikilink(s: string): string {
 	if (pipe >= 0) r = r.slice(0, pipe);
 	return r.trim();
 }
+
+// ─── Settings ────────────────────────────────────────────────────────────────
 
 export type ColorByField = 'none' | 'status' | 'priority';
 
@@ -110,6 +136,7 @@ export const DEFAULT_PLUGIN_SETTINGS: PluginSettings = {
 	priorityColors: {},
 };
 
+/** Per-view settings resolved from the Bases view config + plugin settings. */
 export interface GanttViewSettings {
 	startDateProp: BasesPropertyId | null;
 	endDateProp: BasesPropertyId | null;

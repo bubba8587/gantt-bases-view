@@ -48,3 +48,20 @@ Click any bar or sidebar label to edit dates, status, priority, and dependencies
 ## Example Notes
 
 **Settings > Create examples** generates a `Gantt Examples/` folder with sample tasks covering all dependency types.
+
+## Development
+
+```bash
+npm install
+npm run dev        # watch build
+npm run build      # typecheck + production build (main.js)
+npm test           # unit tests (vitest)
+```
+
+The source is split into three layers:
+
+- `src/core/` — pure, DOM-free logic: task model (`model.ts`), frontmatter parsing (`parse.ts`, `extract.ts`), timeline/date math (`timeline.ts`), dependency-constraint checking (`schedule.ts`), and TSV/Markdown export (`export.ts`). Everything here is covered by the unit tests in `tests/`.
+- `src/ui/` — the Bases view and its DOM rendering: `gantt-view.ts` (view class), `scaffold.ts`, `toolbar.ts`, `task-bar.ts`, `dependency-arrows.ts`, `popup-editor.ts`, `violation-panel.ts`.
+- `src/settings/` — the settings tab, TaskNotes sync, and the example-vault generator.
+
+Dependency semantics live in one place, `src/core/schedule.ts`: the task declaring a dependency is the *successor*, the linked note the *predecessor*, and each of FS/SS/FF/SF binds one successor date to one predecessor date. Both the arrow renderer and the Fix Schedule panel use that single implementation.

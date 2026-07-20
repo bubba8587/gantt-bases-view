@@ -1,8 +1,8 @@
-import { AbstractInputSuggest, TFile } from 'obsidian';
+import { AbstractInputSuggest, TFile, setIcon } from 'obsidian';
 import type { App } from 'obsidian';
-import type { GanttTask, PluginSettings } from './types.ts';
-import { DEP_FIELDS, stripWikilink, DEFAULT_PLUGIN_SETTINGS } from './types.ts';
-import { formatDate } from './timeline.ts';
+import type { GanttTask, PluginSettings } from '../core/model.ts';
+import { DEP_TYPES, DEP_TYPE_TO_FIELD, stripWikilink, DEFAULT_PLUGIN_SETTINGS } from '../core/model.ts';
+import { formatDate } from '../core/timeline.ts';
 
 /** Native Obsidian file-name autocomplete wired to a chips-style dep input. */
 class ChipFileSuggest extends AbstractInputSuggest<TFile> {
@@ -37,13 +37,16 @@ class ChipFileSuggest extends AbstractInputSuggest<TFile> {
 function getPropertyOptions(app: App, propertyName: string, settingsOptions: string[], currentValue?: string): string[] {
 	const base = [...settingsOptions];
 
-	// Append values from the metadata type manager that aren't already in the list.
 	// Comparison is case-insensitive since Obsidian properties are case-insensitive.
 	const baseLower = new Set(base.map(s => s.toLowerCase()));
 
-	const metaOpts: string[] | undefined =
-		(app as any).metadataTypeManager?.properties?.[propertyName]?.options;
-	if (metaOpts && metaOpts.length > 0) {
+	const properties = (app as unknown as {
+		metadataTypeManager?: { properties?: Record<string, { options?: string[] }> };
+	}).metadataTypeManager?.properties;
+	const metaOpts = properties && Object.prototype.hasOwnProperty.call(properties, propertyName)
+		? properties[propertyName]?.options
+		: undefined;
+	if (metaOpts) {
 		for (const opt of metaOpts) {
 			if (!baseLower.has(opt.toLowerCase())) {
 				base.push(opt);
@@ -57,10 +60,6 @@ function getPropertyOptions(app: App, propertyName: string, settingsOptions: str
 	}
 	return base;
 }
-
-const DEP_TYPE_TO_FIELD: Record<string, string> = Object.fromEntries(
-	DEP_FIELDS.map(f => [f.type, f.bare])
-);
 
 // Module-level reference to any currently open popup so we can close it first.
 let activePopup: PopupHandle | null = null;
@@ -142,7 +141,7 @@ export function openPopupEditor(
 	popup.style.top = '-9999px';
 	popup.style.zIndex = '10000';
 
-	// ── Title row ─────────────────────────────────────────────────────────────
+	// ── Title row ────────────────────────────────────────────────────────────
 	const titleRow = document.createElement('div');
 	titleRow.className = 'gbv-popup-title';
 
@@ -153,13 +152,7 @@ export function openPopupEditor(
 	linkBtn.className = 'gbv-popup-link-btn clickable-icon';
 	linkBtn.title = 'Open note';
 	linkBtn.setAttribute('aria-label', 'Open note');
-	// Use a simple external-link SVG icon
-	linkBtn.innerHTML =
-		'<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" ' +
-		'stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
-		'<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>' +
-		'<polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>' +
-		'</svg>';
+	setIcon(linkBtn, 'external-link');
 	linkBtn.addEventListener('click', (e: MouseEvent) => {
 		// Ctrl/Cmd+click opens in new tab — matches Obsidian app-wide behaviour
 		const newTab = e.ctrlKey || e.metaKey;
@@ -201,7 +194,7 @@ export function openPopupEditor(
 	spRow.appendChild(createLabeledField('Priority', prioritySel));
 	popup.appendChild(spRow);
 
-	// ── Dependencies (editable) ───────────────────────────────────────────────
+	// ── Dependencies (editable) ──────────────────────────────────────────────
 	const depsSection = document.createElement('div');
 	depsSection.className = 'gbv-popup-deps';
 
@@ -234,7 +227,7 @@ export function openPopupEditor(
 
 		const typeSel = document.createElement('select');
 		typeSel.className = 'gbv-popup-dep-type';
-		for (const t of ['FS', 'SS', 'FF', 'SF']) {
+		for (const t of DEP_TYPES) {
 			const o = document.createElement('option');
 			o.value = t;
 			o.textContent = t;
@@ -339,7 +332,7 @@ export function openPopupEditor(
 	popup.style.top = `${top}px`;
 	popup.style.visibility = '';
 
-	// ── Cleanup helpers ───────────────────────────────────────────────────────
+	// ── Cleanup helpers ──────────────────────────────────────────────────────
 	function destroy(): void {
 		for (const s of allSuggests) s.close();
 		popup.remove();
@@ -395,7 +388,7 @@ export function openPopupEditor(
 		const startKey = pluginSettings?.startDateProp || DEFAULT_PLUGIN_SETTINGS.startDateProp;
 		const endKey = pluginSettings?.endDateProp || DEFAULT_PLUGIN_SETTINGS.endDateProp;
 
-		await (app.fileManager as any).processFrontMatter(task.file, (fm: Record<string, unknown>) => {
+		await app.fileManager.processFrontMatter(task.file, (fm: Record<string, unknown>) => {
 			if (newStart) {
 				fm[startKey] = newStart;
 			} else {
@@ -425,7 +418,7 @@ export function openPopupEditor(
 		onUpdate();
 	});
 
-	// ── Cancel handler ────────────────────────────────────────────────────────
+	// ── Cancel handler ───────────────────────────────────────────────────────
 	cancelBtn.addEventListener('click', () => {
 		closeActivePopup();
 	});

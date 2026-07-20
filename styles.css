@@ -1066,3 +1066,8 @@ body.gbv-resizing {
 .gbv-violation-apply-all:hover {
   filter: brightness(1.1);
 }
+
+/* ── Settings tab ──────────────────────────────────────────── */
+.gbv-settings-wide-input {
+  width: 100%;
+}
