@@ -442,8 +442,10 @@
   border-radius: 8px;
   box-shadow: var(--shadow-l, 0 8px 32px rgba(0, 0, 0, 0.25));
   padding: 16px;
-  min-width: 280px;
-  max-width: 360px;
+  /* Wide enough for the Start / End / Days row — three cramped date
+     inputs are worse than a slightly larger popup. */
+  min-width: 380px;
+  max-width: 460px;
 }
 
 .gbv-popup-title {
@@ -1139,7 +1141,8 @@ body.gbv-bar-resizing * {
 /* ── Popup — start/end/duration row with locks ─────────────── */
 .gbv-popup-row3 {
   display: grid;
-  grid-template-columns: 1fr 1fr 0.75fr;
+  /* Dates get the space; the days count needs only a narrow fixed column. */
+  grid-template-columns: 1fr 1fr 76px;
   gap: 8px;
   margin-bottom: 12px;
 }
@@ -1200,4 +1203,15 @@ body.gbv-bar-resizing * {
   color: var(--text-muted);
   white-space: nowrap;
   align-self: center;
+}
+
+/* ── Compact mode — sidebar group cell spanning its lanes ──── */
+.gbv-sidebar-compact {
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  font-size: 11px;
+  color: var(--text-faint);
+  border-bottom: 1px solid var(--background-modifier-border);
+  box-sizing: border-box;
 }

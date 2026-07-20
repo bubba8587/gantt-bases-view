@@ -568,6 +568,39 @@ function detectViolations(tasks) {
   return violations;
 }
 
+// src/core/lanes.ts
+var MILESTONE_HALF_PX = 7;
+function packLanes(tasks, config, gapPx = 0) {
+  const items = [];
+  for (const task of tasks) {
+    const bounds = getTaskBarBounds(task, config);
+    if (!bounds) continue;
+    if (task.isMilestone) {
+      items.push({
+        id: task.id,
+        left: bounds.left - MILESTONE_HALF_PX,
+        right: bounds.left + MILESTONE_HALF_PX
+      });
+    } else {
+      items.push({ id: task.id, left: bounds.left, right: bounds.left + bounds.width });
+    }
+  }
+  items.sort((a, b) => a.left - b.left || b.right - a.right || a.id.localeCompare(b.id));
+  const laneRight = [];
+  const laneOf = /* @__PURE__ */ new Map();
+  for (const item of items) {
+    let lane = laneRight.findIndex((right) => item.left >= right + gapPx);
+    if (lane === -1) {
+      lane = laneRight.length;
+      laneRight.push(item.right);
+    } else {
+      laneRight[lane] = item.right;
+    }
+    laneOf.set(item.id, lane);
+  }
+  return { laneOf, laneCount: Math.max(laneRight.length, 1) };
+}
+
 // src/core/export.ts
 function depsLabel(task) {
   if (!task.dependencies || task.dependencies.length === 0) return "";
@@ -686,6 +719,14 @@ function renderToolbar(toolbar, opts) {
   colorBySelect.addEventListener("change", () => {
     opts.onColorByChange(colorBySelect.value);
   });
+  toolbar.createEl("div", { cls: "gbv-toolbar-separator" });
+  const compactBtn = toolbar.createEl("button", {
+    text: "Compact",
+    cls: opts.compact ? "gbv-btn is-active" : "gbv-btn"
+  });
+  compactBtn.title = "Pack tasks that don\u2019t overlap in time onto shared rows";
+  compactBtn.setAttribute("aria-pressed", String(opts.compact));
+  compactBtn.addEventListener("click", opts.onToggleCompact);
   toolbar.createEl("div", { cls: "gbv-toolbar-separator" });
   const hasViolations = opts.violationCount > 0;
   const violationBtn = toolbar.createEl("button", {
@@ -1453,7 +1494,7 @@ function openPopupEditor(task, anchorEl, app, onUpdate, pluginSettings) {
   document.body.appendChild(popup);
   const anchorRect = anchorEl.getBoundingClientRect();
   const popupRect = popup.getBoundingClientRect();
-  const { left, top } = clampToViewport(anchorRect, popupRect.width || 280, popupRect.height || 240, 0, 8);
+  const { left, top } = clampToViewport(anchorRect, popupRect.width || 380, popupRect.height || 240, 0, 8);
   popup.style.left = `${left}px`;
   popup.style.top = `${top}px`;
   popup.style.visibility = "";
@@ -1724,6 +1765,8 @@ var GanttView = class extends import_obsidian3.BasesView {
     // overrides config zoom when set
     this.localColorBy = "none";
     // toolbar-driven bar coloring
+    this.compactRows = false;
+    // pack non-overlapping tasks onto shared rows
     this.sidebarWidth = SIDEBAR_WIDTH;
     // persists across re-renders for drag resize
     this.dragCleanup = null;
@@ -1804,6 +1847,7 @@ var GanttView = class extends import_obsidian3.BasesView {
     renderToolbar(toolbar, {
       currentZoom: settings.zoom,
       colorBy: this.localColorBy,
+      compact: this.compactRows,
       violationCount: violations.length + cycles.length,
       onZoomChange: (zoom) => {
         if (this.localZoom !== zoom) {
@@ -1815,6 +1859,10 @@ var GanttView = class extends import_obsidian3.BasesView {
       },
       onColorByChange: (colorBy) => {
         this.localColorBy = colorBy;
+        this.render();
+      },
+      onToggleCompact: () => {
+        this.compactRows = !this.compactRows;
         this.render();
       },
       onToday: () => {
@@ -1955,6 +2003,22 @@ var GanttView = class extends import_obsidian3.BasesView {
         currentY += GROUP_HEADER_HEIGHT;
       }
       if (isCollapsed) continue;
+      if (this.compactRows) {
+        const lanes = this.renderCompactLanes(
+          group,
+          sidebarInner,
+          barsArea,
+          timelineConfig,
+          settings,
+          taskRowMap,
+          currentY,
+          rowIndex,
+          totalWidth
+        );
+        currentY += lanes * ROW_HEIGHT;
+        rowIndex += lanes;
+        continue;
+      }
       for (const task of group.tasks) {
         taskRowMap.set(task.id, currentY);
         const isAlt = rowIndex % 2 === 1;
@@ -1974,19 +2038,58 @@ var GanttView = class extends import_obsidian3.BasesView {
         if (bounds) {
           const barEl = createTaskBar(task, bounds, settings.colorBy, settings.showPriority, this.plugin.settings);
           barRowEl.appendChild(barEl);
-          makeBarDraggable(barEl, task, timelineConfig, this.app, this.plugin.settings, {
-            resizable: !task.isMilestone
-          });
-          barEl.addEventListener("click", (e) => {
-            e.stopPropagation();
-            if (consumePostDragClick(barEl)) return;
-            openPopupEditor(task, barEl, this.app, () => this.render(), this.plugin.settings);
-          });
+          this.attachBarInteractions(barEl, task, timelineConfig);
         }
         currentY += ROW_HEIGHT;
       }
     }
     return { taskRowMap, totalHeightPx: currentY };
+  }
+  /**
+   * Compact mode: tasks that don't overlap in time share a row. The sidebar
+   * shows one summary cell per group (bars carry their own labels); task
+   * rows in the arrow map point at each task's lane so dependency arrows
+   * keep working unchanged. Returns the number of lanes rendered.
+   */
+  renderCompactLanes(group, sidebarInner, barsArea, timelineConfig, settings, taskRowMap, startY, startRowIndex, totalWidth) {
+    const { laneOf, laneCount } = packLanes(group.tasks, timelineConfig);
+    const rowEls = [];
+    for (let lane = 0; lane < laneCount; lane++) {
+      const rowEl = barsArea.createEl("div", { cls: "gbv-bar-row" });
+      if ((startRowIndex + lane) % 2 === 1) rowEl.classList.add("gbv-bar-row--alt");
+      rowEl.style.width = `${totalWidth}px`;
+      rowEls.push(rowEl);
+    }
+    const cell = document.createElement("div");
+    cell.className = "gbv-sidebar-compact";
+    cell.style.height = `${laneCount * ROW_HEIGHT}px`;
+    const placed = group.tasks.filter((t) => laneOf.has(t.id)).length;
+    cell.textContent = `${placed} task${placed === 1 ? "" : "s"}`;
+    if (placed < group.tasks.length) {
+      cell.textContent += ` (+${group.tasks.length - placed} undated)`;
+    }
+    sidebarInner.appendChild(cell);
+    for (const task of group.tasks) {
+      const lane = laneOf.get(task.id);
+      if (lane === void 0) continue;
+      taskRowMap.set(task.id, startY + lane * ROW_HEIGHT);
+      const bounds = getTaskBarBounds(task, timelineConfig);
+      if (!bounds) continue;
+      const barEl = createTaskBar(task, bounds, settings.colorBy, settings.showPriority, this.plugin.settings);
+      rowEls[lane].appendChild(barEl);
+      this.attachBarInteractions(barEl, task, timelineConfig);
+    }
+    return laneCount;
+  }
+  attachBarInteractions(barEl, task, timelineConfig) {
+    makeBarDraggable(barEl, task, timelineConfig, this.app, this.plugin.settings, {
+      resizable: !task.isMilestone
+    });
+    barEl.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (consumePostDragClick(barEl)) return;
+      openPopupEditor(task, barEl, this.app, () => this.render(), this.plugin.settings);
+    });
   }
   renderGroupHeader(group, isCollapsed, sidebarInner, barsArea, timelineConfig, totalWidth) {
     const toggle = () => {

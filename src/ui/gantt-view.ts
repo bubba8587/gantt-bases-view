@@ -35,6 +35,7 @@ import {
 	totalTimelineWidth,
 } from '../core/timeline.ts';
 import { detectViolations, findDependencyCycles } from '../core/schedule.ts';
+import { packLanes } from '../core/lanes.ts';
 import { exportToTSV } from '../core/export.ts';
 import { buildGanttScaffold, setTimelineSize } from './scaffold.ts';
 import { renderToolbar } from './toolbar.ts';
@@ -51,6 +52,7 @@ export class GanttView extends BasesView {
 	private plugin: GanttBasesViewPlugin;
 	private localZoom: ZoomLevel | null = null;   // overrides config zoom when set
 	private localColorBy: ColorByField = 'none';  // toolbar-driven bar coloring
+	private compactRows = false;                  // pack non-overlapping tasks onto shared rows
 	private sidebarWidth: number = SIDEBAR_WIDTH; // persists across re-renders for drag resize
 	private dragCleanup: (() => void) | null = null; // cancels any in-progress sidebar drag
 	private collapsedGroups: Set<string> = new Set(); // group keys the user has collapsed
@@ -155,6 +157,7 @@ export class GanttView extends BasesView {
 		renderToolbar(toolbar, {
 			currentZoom: settings.zoom,
 			colorBy: this.localColorBy,
+			compact: this.compactRows,
 			violationCount: violations.length + cycles.length,
 			onZoomChange: (zoom) => {
 				if (this.localZoom !== zoom) {
@@ -166,6 +169,10 @@ export class GanttView extends BasesView {
 			},
 			onColorByChange: (colorBy) => {
 				this.localColorBy = colorBy;
+				this.render();
+			},
+			onToggleCompact: () => {
+				this.compactRows = !this.compactRows;
 				this.render();
 			},
 			onToday: () => {
@@ -343,6 +350,15 @@ export class GanttView extends BasesView {
 
 			if (isCollapsed) continue;
 
+			if (this.compactRows) {
+				const lanes = this.renderCompactLanes(
+					group, sidebarInner, barsArea, timelineConfig, settings, taskRowMap, currentY, rowIndex, totalWidth,
+				);
+				currentY += lanes * ROW_HEIGHT;
+				rowIndex += lanes;
+				continue;
+			}
+
 			for (const task of group.tasks) {
 				// Store row TOP (not center) — dependency-arrows.ts uses this to
 				// compute exact bar-corner Y coordinates for arrow anchors.
@@ -367,14 +383,7 @@ export class GanttView extends BasesView {
 				if (bounds) {
 					const barEl = createTaskBar(task, bounds, settings.colorBy, settings.showPriority, this.plugin.settings);
 					barRowEl.appendChild(barEl);
-					makeBarDraggable(barEl, task, timelineConfig, this.app, this.plugin.settings, {
-						resizable: !task.isMilestone,
-					});
-					barEl.addEventListener('click', (e) => {
-						e.stopPropagation();
-						if (consumePostDragClick(barEl)) return;
-						openPopupEditor(task, barEl, this.app, () => this.render(), this.plugin.settings);
-					});
+					this.attachBarInteractions(barEl, task, timelineConfig);
 				}
 
 				currentY += ROW_HEIGHT;
@@ -382,6 +391,70 @@ export class GanttView extends BasesView {
 		}
 
 		return { taskRowMap, totalHeightPx: currentY };
+	}
+
+	/**
+	 * Compact mode: tasks that don't overlap in time share a row. The sidebar
+	 * shows one summary cell per group (bars carry their own labels); task
+	 * rows in the arrow map point at each task's lane so dependency arrows
+	 * keep working unchanged. Returns the number of lanes rendered.
+	 */
+	private renderCompactLanes(
+		group: TaskGroup,
+		sidebarInner: HTMLElement,
+		barsArea: HTMLElement,
+		timelineConfig: TimelineConfig,
+		settings: GanttViewSettings,
+		taskRowMap: Map<string, number>,
+		startY: number,
+		startRowIndex: number,
+		totalWidth: number,
+	): number {
+		const { laneOf, laneCount } = packLanes(group.tasks, timelineConfig);
+
+		const rowEls: HTMLElement[] = [];
+		for (let lane = 0; lane < laneCount; lane++) {
+			const rowEl = barsArea.createEl('div', { cls: 'gbv-bar-row' });
+			if ((startRowIndex + lane) % 2 === 1) rowEl.classList.add('gbv-bar-row--alt');
+			rowEl.style.width = `${totalWidth}px`;
+			rowEls.push(rowEl);
+		}
+
+		// One sidebar cell spanning all lanes — individual labels live on the bars.
+		const cell = document.createElement('div');
+		cell.className = 'gbv-sidebar-compact';
+		cell.style.height = `${laneCount * ROW_HEIGHT}px`;
+		const placed = group.tasks.filter(t => laneOf.has(t.id)).length;
+		cell.textContent = `${placed} task${placed === 1 ? '' : 's'}`;
+		if (placed < group.tasks.length) {
+			cell.textContent += ` (+${group.tasks.length - placed} undated)`;
+		}
+		sidebarInner.appendChild(cell);
+
+		for (const task of group.tasks) {
+			const lane = laneOf.get(task.id);
+			if (lane === undefined) continue; // dateless — nothing to draw in compact mode
+			taskRowMap.set(task.id, startY + lane * ROW_HEIGHT);
+
+			const bounds = getTaskBarBounds(task, timelineConfig);
+			if (!bounds) continue;
+			const barEl = createTaskBar(task, bounds, settings.colorBy, settings.showPriority, this.plugin.settings);
+			rowEls[lane].appendChild(barEl);
+			this.attachBarInteractions(barEl, task, timelineConfig);
+		}
+
+		return laneCount;
+	}
+
+	private attachBarInteractions(barEl: HTMLElement, task: GanttTask, timelineConfig: TimelineConfig): void {
+		makeBarDraggable(barEl, task, timelineConfig, this.app, this.plugin.settings, {
+			resizable: !task.isMilestone,
+		});
+		barEl.addEventListener('click', (e) => {
+			e.stopPropagation();
+			if (consumePostDragClick(barEl)) return;
+			openPopupEditor(task, barEl, this.app, () => this.render(), this.plugin.settings);
+		});
 	}
 
 	private renderGroupHeader(

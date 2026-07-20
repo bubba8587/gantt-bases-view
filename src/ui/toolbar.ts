@@ -13,9 +13,11 @@ const COLOR_BY_LABELS: Record<ColorByField, string> = {
 export interface ToolbarOptions {
 	currentZoom: ZoomLevel;
 	colorBy: ColorByField;
+	compact: boolean;
 	violationCount: number;
 	onZoomChange: (zoom: ZoomLevel) => void;
 	onColorByChange: (colorBy: ColorByField) => void;
+	onToggleCompact: () => void;
 	onToday: () => void;
 	onFixSchedule: () => void;
 	onExport: () => void | Promise<void>;
@@ -50,6 +52,17 @@ export function renderToolbar(toolbar: HTMLElement, opts: ToolbarOptions): void 
 	colorBySelect.addEventListener('change', () => {
 		opts.onColorByChange(colorBySelect.value as ColorByField);
 	});
+
+	toolbar.createEl('div', { cls: 'gbv-toolbar-separator' });
+
+	// Compact toggle: pack non-overlapping tasks onto shared rows
+	const compactBtn = toolbar.createEl('button', {
+		text: 'Compact',
+		cls: opts.compact ? 'gbv-btn is-active' : 'gbv-btn',
+	});
+	compactBtn.title = 'Pack tasks that don’t overlap in time onto shared rows';
+	compactBtn.setAttribute('aria-pressed', String(opts.compact));
+	compactBtn.addEventListener('click', opts.onToggleCompact);
 
 	toolbar.createEl('div', { cls: 'gbv-toolbar-separator' });
 

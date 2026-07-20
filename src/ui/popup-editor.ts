@@ -442,7 +442,7 @@ export function openPopupEditor(
 
 	const anchorRect = anchorEl.getBoundingClientRect();
 	const popupRect = popup.getBoundingClientRect();
-	const { left, top } = clampToViewport(anchorRect, popupRect.width || 280, popupRect.height || 240, 0, 8);
+	const { left, top } = clampToViewport(anchorRect, popupRect.width || 380, popupRect.height || 240, 0, 8);
 
 	popup.style.left = `${left}px`;
 	popup.style.top = `${top}px`;

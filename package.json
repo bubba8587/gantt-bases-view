@@ -1,6 +1,6 @@
 {
 	"name": "gantt-bases-view",
-	"version": "1.4.0",
+	"version": "1.5.0",
 	"description": "A Gantt chart custom view for Obsidian Bases",
 	"main": "main.js",
 	"scripts": {

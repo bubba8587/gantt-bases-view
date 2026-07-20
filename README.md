@@ -51,6 +51,7 @@ Values already used in your vault are appended to the dropdowns automatically.
 - **Zoom** — Day / Week / Month / 1Y / 2Y / 3Y
 - **Today** — scroll to today
 - **Color** — color bars by status, priority, or none (colors sync from TaskNotes)
+- **Compact** — pack tasks that don't overlap in time onto shared rows (an FS chain becomes one line); the sidebar shows a per-group summary and labels move onto the bars
 - **Fix Schedule** — shows dependency violations with suggested fixes; start-date fixes preserve task duration, and **Apply All** cascades through dependent tasks until the schedule is consistent. Circular dependency chains are detected and listed by name — no date fix can satisfy them, so remove a link instead
 - **Copy TSV** — export for pasting into spreadsheets
 
