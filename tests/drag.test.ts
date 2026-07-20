@@ -39,14 +39,14 @@ describe('applyDragToDates', () => {
 	});
 
 	it('resizing a deadline-only task creates its start from the rendered bar', () => {
-		// Bar renders Apr 14 → 15; dragging the left edge back 4 days → start Apr 10.
+		// Bar occupies the due day (Apr 15); dragging the left edge back 4 days → start Apr 11.
 		const task = makeTask('t', { endDate: apr(15) });
-		expect(applyDragToDates(task, 'resize-start', -4)).toEqual({ newStart: apr(10), newEnd: null });
+		expect(applyDragToDates(task, 'resize-start', -4)).toEqual({ newStart: apr(11), newEnd: null });
 	});
 
 	it('resizing a timeEstimate task creates its end from the estimated finish', () => {
-		// Apr 3 + 16h at 8h/day renders to Apr 5; +2 days → end Apr 7.
+		// Apr 3 + 16h at 8h/day covers Apr 3–4 (inclusive); +2 days → end Apr 6.
 		const task = makeTask('t', { startDate: apr(3), timeEstimate: 16 * 60 });
-		expect(applyDragToDates(task, 'resize-end', 2)).toEqual({ newStart: null, newEnd: apr(7) });
+		expect(applyDragToDates(task, 'resize-end', 2)).toEqual({ newStart: null, newEnd: apr(6) });
 	});
 });

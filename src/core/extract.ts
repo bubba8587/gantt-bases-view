@@ -46,11 +46,10 @@ export function extractTask(entry: BasesEntry, settings: GanttViewSettings): Gan
 	const timeEstimate = parseNumber(entry.getValue('note.timeEstimate' as BasesPropertyId));
 	const dependencies = parseDependencies(entry);
 
-	// A milestone is a single point in time: one date with no duration
-	const isMilestone =
-		(startDate !== null && endDate === null && timeEstimate === null) ||
-		(startDate !== null && endDate !== null &&
-			startDate.toDateString() === endDate.toDateString());
+	// A milestone is a zero-duration point event: a start date with no end and
+	// no estimate. Same-day start/end is a 1-day task, not a milestone —
+	// inclusive dates mean it occupies that whole day.
+	const isMilestone = startDate !== null && endDate === null && timeEstimate === null;
 
 	return {
 		id: entry.file.path,

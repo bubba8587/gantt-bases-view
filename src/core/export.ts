@@ -13,7 +13,8 @@ function depsLabel(task: GanttTask): string {
 
 function durationDays(task: GanttTask): string {
 	if (!task.startDate || !task.endDate) return '';
-	return String(daysBetween(task.startDate, task.endDate));
+	// Inclusive dates: Aug 1 → Aug 14 is a 14-day task.
+	return String(daysBetween(task.startDate, task.endDate) + 1);
 }
 
 // ─── TSV export ──────────────────────────────────────────────────────────────
@@ -33,13 +34,13 @@ export function columnExportLabel(col: ColumnHeader, zoom: TimelineConfig['zoom'
 
 /**
  * Returns true if the task bar overlaps the column's day range
- * [startDate, endDateExclusive).
+ * [startDate, endDateExclusive). Task end dates are inclusive.
  */
 function taskOverlapsColumn(task: GanttTask, col: ColumnHeader): boolean {
 	const start = task.startDate;
 	const end = task.endDate;
 	if (!start || !end) return false;
-	return start < col.endDateExclusive && end > col.startDate;
+	return start < col.endDateExclusive && end >= col.startDate;
 }
 
 /**

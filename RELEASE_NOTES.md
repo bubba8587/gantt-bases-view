@@ -1,5 +1,7 @@
 ## What's New
 
+- **Standard Gantt date semantics** — end dates are now inclusive, matching MS Project and every mainstream Gantt tool: a task due Aug 14 occupies Aug 14 (bars are one day wider than before), duration Aug 1–14 counts as 14 days, a same-day start/due is a 1-day task rather than a milestone, and an FS successor starts the day *after* its predecessor finishes (milestones are zero-duration, so same-day starts after a milestone are fine). Week columns now start on Monday, matching their ISO week labels.
+
 - **Drag to reschedule** — drag a bar to move a task in time, or drag its left/right edge to change just the start or end date. Deltas snap to whole days, a tooltip shows the dates while you drag, and the result is written straight to frontmatter. Milestones drag too.
 - **Dependency arrows fixed** — arrows now run predecessor → successor and connect the correct bar edges (FS: finish → start, SF: start → finish). Previously FS and SF arrows swept between the wrong ends of the bars.
 - **Hover highlighting** — hovering a bar highlights the dependency arrows connected to it.

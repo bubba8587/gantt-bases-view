@@ -102,7 +102,9 @@ export function computeTimelineRange(tasks: GanttTask[], zoom: ZoomLevel): Timel
 	} else if (zoom === 'month') {
 		earliest.setDate(1);
 	} else if (zoom === 'week') {
-		earliest = addDays(earliest, -earliest.getDay()); // snap to Sunday
+		// Snap to Monday so week columns line up with the ISO weeks they're
+		// labeled with (a Sunday-start column would begin in the prior ISO week).
+		earliest = addDays(earliest, -((earliest.getDay() + 6) % 7));
 	}
 
 	return {
@@ -169,11 +171,10 @@ export function generateColumns(config: TimelineConfig): ColumnHeader[] {
 		}
 
 		case 'week': {
-			// Columns snap to Sunday; ISO weeks are Monday-based, so the week
-			// number is taken from the Monday inside each column.
+			// Columns start on Monday (ISO weeks), matching their labels.
 			while (cursor <= config.endDate) {
 				const next = addDays(cursor, 7);
-				const { week, year } = isoWeek(addDays(cursor, 1));
+				const { week, year } = isoWeek(cursor);
 				columns.push({
 					group: String(year),
 					label: `W${week}`,
@@ -231,10 +232,11 @@ export function generateColumns(config: TimelineConfig): ColumnHeader[] {
 // ─── Bar geometry ────────────────────────────────────────────────────────────
 
 /**
- * The dates a task's bar actually renders with, filling in the missing side:
- * start-only tasks run 1 day (or their timeEstimate at 8h/day), deadline-only
- * tasks get a 1-day bar ending on the due date. Null when the task has no
- * dates at all.
+ * The INCLUSIVE dates a task's bar renders with (standard all-day Gantt
+ * semantics: a task due Aug 14 occupies Aug 14 and finishes at the end of
+ * it). Missing sides are filled in: start-only tasks run 1 day (or their
+ * timeEstimate at 8h/day), deadline-only tasks occupy just the due day.
+ * Null when the task has no dates at all.
  */
 export function getEffectiveBarDates(
 	task: Pick<GanttTask, 'startDate' | 'endDate' | 'timeEstimate'>,
@@ -244,11 +246,11 @@ export function getEffectiveBarDates(
 
 	if (startDate && !endDate) {
 		// 8-hour workdays when a timeEstimate (minutes) is present; 1 day otherwise.
-		const days = timeEstimate ? Math.ceil(timeEstimate / (60 * 8)) : 1;
-		return { start: startDate, end: addDays(startDate, days) };
+		const days = timeEstimate ? Math.max(1, Math.ceil(timeEstimate / (60 * 8))) : 1;
+		return { start: startDate, end: addDays(startDate, days - 1) };
 	}
 	if (!startDate && endDate) {
-		return { start: addDays(endDate, -1), end: endDate };
+		return { start: endDate, end: endDate };
 	}
 	return { start: startDate!, end: endDate! };
 }
@@ -261,7 +263,8 @@ export function getTaskBarBounds(
 	if (!dates) return null;
 
 	const left = dateToPixelOffset(dates.start, config);
-	const right = dateToPixelOffset(dates.end, config);
+	// End dates are inclusive: the bar extends through the end of its last day.
+	const right = dateToPixelOffset(addDays(dates.end, 1), config);
 	// Reversed dates (start after end) still get a minimum-width bar, never negative.
 	const width = Math.max(right - left, config.pixelsPerDay);
 

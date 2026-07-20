@@ -448,7 +448,8 @@ export class GanttView extends BasesView {
 		if (!maxDate) maxDate = minDate;
 
 		const left = dateToPixelOffset(minDate, timelineConfig);
-		const right = dateToPixelOffset(maxDate, timelineConfig);
+		// End dates are inclusive — cover the last day like the task bars do.
+		const right = dateToPixelOffset(addDays(maxDate, 1), timelineConfig);
 		return { left, width: Math.max(right - left, timelineConfig.pixelsPerDay) };
 	}
 

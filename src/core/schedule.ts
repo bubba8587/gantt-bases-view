@@ -5,10 +5,16 @@ import { addDays, daysBetween, formatDate } from './timeline.ts';
  * Dependency constraint semantics (MS Project conventions). The task that
  * declares the dependency is the SUCCESSOR; the linked task is the PREDECESSOR.
  *
- *   FS — successor starts   no earlier than predecessor's finish
+ *   FS — successor starts   after the predecessor's finish
  *   SS — successor starts   no earlier than predecessor's start
  *   FF — successor finishes no earlier than predecessor's finish
  *   SF — successor finishes no earlier than predecessor's start
+ *
+ * Dates are inclusive all-day dates: a task finishes at the END of its due
+ * day, so an FS successor can start no earlier than the NEXT day. Milestones
+ * are zero-duration — an FS successor may start the same day. SS compares
+ * starts-of-day and FF/SF compare against moments that end or begin within
+ * the day, so same-day satisfies those.
  */
 
 export interface ScheduleViolation {
@@ -45,41 +51,55 @@ export const DEP_VERBS: Record<DependencyType, [string, string]> = {
 
 /**
  * The date a PREDECESSOR constrains by, matching what its bar shows even when
- * one side is missing: a milestone's finish is its own date, a timeEstimate
- * task finishes after its estimated workdays, and a deadline-only task starts
- * the day before its due date.
+ * one side is missing (all inclusive dates): a milestone's finish is its own
+ * date, a timeEstimate task finishes on its last estimated workday, and a
+ * deadline-only task occupies just its due day.
  */
 export function effectiveConstraintDate(task: GanttTask, which: 'start' | 'end'): Date | null {
 	if (which === 'start') {
-		if (task.startDate) return task.startDate;
-		return task.endDate ? addDays(task.endDate, -1) : null;
+		return task.startDate ?? task.endDate ?? null;
 	}
 	if (task.endDate) return task.endDate;
 	if (task.startDate) {
 		return task.timeEstimate
-			? addDays(task.startDate, Math.ceil(task.timeEstimate / (60 * 8)))
+			? addDays(task.startDate, Math.max(1, Math.ceil(task.timeEstimate / (60 * 8))) - 1)
 			: task.startDate; // milestone: finishes the moment it happens
 	}
 	return null;
 }
 
+/** Zero-duration point event: only a start date, no end and no estimate. */
+function isZeroDuration(task: GanttTask): boolean {
+	return task.startDate !== null && task.endDate === null && task.timeEstimate === null;
+}
+
 /**
- * Evaluates one dependency. Returns the required date when the constraint is
- * violated, or null when it holds (or can't be evaluated for missing dates).
- * The predecessor side uses effective dates (so e.g. milestones still
- * constrain); the successor is only checked on dates it actually has.
+ * Evaluates one dependency. Returns the successor date required to satisfy
+ * the constraint when it's violated, or null when it holds (or can't be
+ * evaluated for missing dates). The predecessor side uses effective dates
+ * (so e.g. milestones still constrain); the successor is only checked on
+ * dates it actually has. `predDate` is the predecessor date the constraint
+ * references, for display.
  */
 export function checkConstraint(
 	type: DependencyType,
 	predecessor: GanttTask,
 	successor: GanttTask,
-): { fixField: 'start' | 'end'; requiredDate: Date } | null {
+): { fixField: 'start' | 'end'; requiredDate: Date; predDate: Date } | null {
 	if (predecessor === successor) return null;
 	const { fixField, boundTo } = CONSTRAINTS[type];
-	const requiredDate = effectiveConstraintDate(predecessor, boundTo);
+	const predDate = effectiveConstraintDate(predecessor, boundTo);
 	const actualDate = fixField === 'start' ? successor.startDate : successor.endDate;
-	if (!requiredDate || !actualDate) return null;
-	return actualDate < requiredDate ? { fixField, requiredDate } : null;
+	if (!predDate || !actualDate) return null;
+
+	// FS: the predecessor finishes at the END of its due day, so the successor
+	// starts the next day — except after zero-duration milestones, which
+	// consume no time, so a same-day start is fine.
+	const requiredDate = type === 'FS' && !isZeroDuration(predecessor)
+		? addDays(predDate, 1)
+		: predDate;
+
+	return actualDate < requiredDate ? { fixField, requiredDate, predDate } : null;
 }
 
 export function isViolated(
@@ -185,7 +205,7 @@ export function detectViolations(tasks: GanttTask[]): ScheduleViolation[] {
 				suggestedDate: result.requiredDate,
 				description:
 					`${successor.title} ${verb} ${predecessor.title} ` +
-					`${predVerb} (${formatDate(result.requiredDate)})`,
+					`${predVerb} (${formatDate(result.predDate)})`,
 			});
 		}
 	}

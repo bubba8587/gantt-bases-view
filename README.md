@@ -10,6 +10,8 @@ Install via [BRAT](https://github.com/TfTHacker/obsidian42-brat): `jortscity/gan
 
 Uses `scheduled`, `due`, `status`, and `priority` by default. Start/end date properties are configurable in plugin settings.
 
+Dates are **inclusive** all-day dates, per standard Gantt convention: a task with `due: 2026-08-14` occupies Aug 14 and finishes at the end of it, so a `blockedBy` successor can start Aug 15. A task scheduled and due the same day is a 1-day task; a note with only a start date (and no `timeEstimate`) is a zero-duration milestone, and tasks blocked by a milestone may start the same day it happens.
+
 ### Dependencies
 
 Wikilink arrays, same pattern as TaskNotes' `blockedBy`. Dependencies are declared on the **successor** — the linked notes are its **predecessors**. `blockedBy: [[Task A]]` in Task B means *Task B starts after Task A finishes*, and the arrow draws from Task A's finish to Task B's start.

@@ -153,7 +153,7 @@ function extractTask(entry, settings) {
   const title = parseString(entry.getValue("note.title")) || entry.file.basename;
   const timeEstimate = parseNumber(entry.getValue("note.timeEstimate"));
   const dependencies = parseDependencies(entry);
-  const isMilestone = startDate !== null && endDate === null && timeEstimate === null || startDate !== null && endDate !== null && startDate.toDateString() === endDate.toDateString();
+  const isMilestone = startDate !== null && endDate === null && timeEstimate === null;
   return {
     id: entry.file.path,
     file: entry.file,
@@ -268,7 +268,7 @@ function computeTimelineRange(tasks, zoom) {
   } else if (zoom === "month") {
     earliest.setDate(1);
   } else if (zoom === "week") {
-    earliest = addDays(earliest, -earliest.getDay());
+    earliest = addDays(earliest, -((earliest.getDay() + 6) % 7));
   }
   return {
     startDate: snapToDay(earliest),
@@ -317,7 +317,7 @@ function generateColumns(config) {
     case "week": {
       while (cursor <= config.endDate) {
         const next = addDays(cursor, 7);
-        const { week, year } = isoWeek(addDays(cursor, 1));
+        const { week, year } = isoWeek(cursor);
         columns.push({
           group: String(year),
           label: `W${week}`,
@@ -371,11 +371,11 @@ function getEffectiveBarDates(task) {
   const { startDate, endDate, timeEstimate } = task;
   if (!startDate && !endDate) return null;
   if (startDate && !endDate) {
-    const days = timeEstimate ? Math.ceil(timeEstimate / (60 * 8)) : 1;
-    return { start: startDate, end: addDays(startDate, days) };
+    const days = timeEstimate ? Math.max(1, Math.ceil(timeEstimate / (60 * 8))) : 1;
+    return { start: startDate, end: addDays(startDate, days - 1) };
   }
   if (!startDate && endDate) {
-    return { start: addDays(endDate, -1), end: endDate };
+    return { start: endDate, end: endDate };
   }
   return { start: startDate, end: endDate };
 }
@@ -383,7 +383,7 @@ function getTaskBarBounds(task, config) {
   const dates = getEffectiveBarDates(task);
   if (!dates) return null;
   const left = dateToPixelOffset(dates.start, config);
-  const right = dateToPixelOffset(dates.end, config);
+  const right = dateToPixelOffset(addDays(dates.end, 1), config);
   const width = Math.max(right - left, config.pixelsPerDay);
   return { left, width };
 }
@@ -403,22 +403,25 @@ var DEP_VERBS = {
 };
 function effectiveConstraintDate(task, which) {
   if (which === "start") {
-    if (task.startDate) return task.startDate;
-    return task.endDate ? addDays(task.endDate, -1) : null;
+    return task.startDate ?? task.endDate ?? null;
   }
   if (task.endDate) return task.endDate;
   if (task.startDate) {
-    return task.timeEstimate ? addDays(task.startDate, Math.ceil(task.timeEstimate / (60 * 8))) : task.startDate;
+    return task.timeEstimate ? addDays(task.startDate, Math.max(1, Math.ceil(task.timeEstimate / (60 * 8))) - 1) : task.startDate;
   }
   return null;
+}
+function isZeroDuration(task) {
+  return task.startDate !== null && task.endDate === null && task.timeEstimate === null;
 }
 function checkConstraint(type, predecessor, successor) {
   if (predecessor === successor) return null;
   const { fixField, boundTo } = CONSTRAINTS[type];
-  const requiredDate = effectiveConstraintDate(predecessor, boundTo);
+  const predDate = effectiveConstraintDate(predecessor, boundTo);
   const actualDate = fixField === "start" ? successor.startDate : successor.endDate;
-  if (!requiredDate || !actualDate) return null;
-  return actualDate < requiredDate ? { fixField, requiredDate } : null;
+  if (!predDate || !actualDate) return null;
+  const requiredDate = type === "FS" && !isZeroDuration(predecessor) ? addDays(predDate, 1) : predDate;
+  return actualDate < requiredDate ? { fixField, requiredDate, predDate } : null;
 }
 function isViolated(dep, predecessor, successor) {
   return checkConstraint(dep.type, predecessor, successor) !== null;
@@ -480,7 +483,7 @@ function detectViolations(tasks) {
         dep,
         fixField: result.fixField,
         suggestedDate: result.requiredDate,
-        description: `${successor.title} ${verb} ${predecessor.title} ${predVerb} (${formatDate(result.requiredDate)})`
+        description: `${successor.title} ${verb} ${predecessor.title} ${predVerb} (${formatDate(result.predDate)})`
       });
     }
   }
@@ -494,7 +497,7 @@ function depsLabel(task) {
 }
 function durationDays(task) {
   if (!task.startDate || !task.endDate) return "";
-  return String(daysBetween(task.startDate, task.endDate));
+  return String(daysBetween(task.startDate, task.endDate) + 1);
 }
 var DATA_HEADERS = ["Task", "Status", "Priority", "Start", "End", "Duration (days)", "Dependencies"];
 var BAR_CHAR = "\u2588";
@@ -509,7 +512,7 @@ function taskOverlapsColumn(task, col) {
   const start = task.startDate;
   const end = task.endDate;
   if (!start || !end) return false;
-  return start < col.endDateExclusive && end > col.startDate;
+  return start < col.endDateExclusive && end >= col.startDate;
 }
 function exportToTSV(groups, timelineConfig) {
   const columns = generateColumns(timelineConfig);
@@ -1767,7 +1770,7 @@ var GanttView = class extends import_obsidian3.BasesView {
     if (!minDate) return null;
     if (!maxDate) maxDate = minDate;
     const left = dateToPixelOffset(minDate, timelineConfig);
-    const right = dateToPixelOffset(maxDate, timelineConfig);
+    const right = dateToPixelOffset(addDays(maxDate, 1), timelineConfig);
     return { left, width: Math.max(right - left, timelineConfig.pixelsPerDay) };
   }
   renderTodayLine(barsArea, timelineConfig) {
@@ -2025,7 +2028,7 @@ var EXAMPLE_NOTES = [
       "---",
       "",
       "**Edge case** \u2014 only a due date, no scheduled.",
-      "Should fall back to a 1-day bar ending on the due date.",
+      "Should fall back to a 1-day bar occupying the due date.",
       "Also shares a dependency with Development (both blocked by Design)."
     ].join("\n")
   },
@@ -2044,9 +2047,9 @@ var EXAMPLE_NOTES = [
       '  - "[[GE-Development]]"',
       "---",
       "",
-      "**Edge case + violation** \u2014 scheduled is AFTER due (reversed dates),",
-      "AND start is before Development finishes \u2014 triggers a schedule violation.",
-      "Bar width must not go negative."
+      "**Edge case** \u2014 scheduled is AFTER due (reversed dates).",
+      "Bar width must not go negative, and a start-date fix normalizes",
+      "the reversed dates instead of leaving them inverted."
     ].join("\n")
   },
   {
@@ -2147,9 +2150,9 @@ var EXAMPLE_NOTES = [
       "---",
       "",
       "**Multi-dep FS violation** \u2014 blocked by both Testing (Apr 8\u201328)",
-      "and Documentation (Apr 14\u201321). Start Apr 15 is after Documentation",
-      "finishes (Apr 21) but before Testing finishes (Apr 28) \u2014 one",
-      "violated, one OK. Fix should move start to Apr 28."
+      "and Documentation (Apr 14\u201321). Both are violated, but Testing is",
+      "the binding one: the fix should move start to Apr 29 (the day",
+      "after Testing finishes), not Apr 22."
     ].join("\n")
   },
   {
@@ -2169,7 +2172,7 @@ var EXAMPLE_NOTES = [
       "",
       "**Cascading FS violation** \u2014 depends on Handoff (ends Apr 18), so",
       "this task is fine on its own. But once Handoff is fixed to start",
-      "Apr 28, Sign-off will also need updating. Tests cascading fixes."
+      "Apr 29, Sign-off will also need updating. Tests cascading fixes."
     ].join("\n")
   }
 ];

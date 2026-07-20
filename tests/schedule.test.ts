@@ -16,17 +16,23 @@ function pair(predDates: [number, number], succDates: [number, number]): [GanttT
 }
 
 describe('checkConstraint', () => {
-	it('FS: successor must start no earlier than predecessor finishes', () => {
+	it('FS: successor must start the day after the predecessor finishes', () => {
+		// Inclusive dates: pred occupies its Apr 10 due day, so succ starts Apr 11.
 		const [pred, succ] = pair([1, 10], [5, 15]);
-		expect(checkConstraint('FS', pred, succ)).toEqual({ fixField: 'start', requiredDate: apr(10) });
+		expect(checkConstraint('FS', pred, succ)).toEqual({ fixField: 'start', requiredDate: apr(11), predDate: apr(10) });
 
+		// Starting ON the predecessor's finish day is still a violation…
 		const [pred2, succ2] = pair([1, 10], [10, 15]);
-		expect(checkConstraint('FS', pred2, succ2)).toBeNull();
+		expect(checkConstraint('FS', pred2, succ2)).toEqual({ fixField: 'start', requiredDate: apr(11), predDate: apr(10) });
+
+		// …the day after is fine.
+		const [pred3, succ3] = pair([1, 10], [11, 15]);
+		expect(checkConstraint('FS', pred3, succ3)).toBeNull();
 	});
 
 	it('SS: successor must start no earlier than predecessor starts', () => {
 		const [pred, succ] = pair([5, 10], [3, 15]);
-		expect(checkConstraint('SS', pred, succ)).toEqual({ fixField: 'start', requiredDate: apr(5) });
+		expect(checkConstraint('SS', pred, succ)).toEqual({ fixField: 'start', requiredDate: apr(5), predDate: apr(5) });
 
 		const [pred2, succ2] = pair([5, 10], [5, 15]);
 		expect(checkConstraint('SS', pred2, succ2)).toBeNull();
@@ -34,7 +40,7 @@ describe('checkConstraint', () => {
 
 	it('FF: successor must finish no earlier than predecessor finishes', () => {
 		const [pred, succ] = pair([1, 21], [14, 17]);
-		expect(checkConstraint('FF', pred, succ)).toEqual({ fixField: 'end', requiredDate: apr(21) });
+		expect(checkConstraint('FF', pred, succ)).toEqual({ fixField: 'end', requiredDate: apr(21), predDate: apr(21) });
 
 		const [pred2, succ2] = pair([1, 21], [14, 21]);
 		expect(checkConstraint('FF', pred2, succ2)).toBeNull();
@@ -42,34 +48,33 @@ describe('checkConstraint', () => {
 
 	it('SF: successor must finish no earlier than predecessor starts', () => {
 		const [pred, succ] = pair([8, 28], [1, 5]);
-		expect(checkConstraint('SF', pred, succ)).toEqual({ fixField: 'end', requiredDate: apr(8) });
+		expect(checkConstraint('SF', pred, succ)).toEqual({ fixField: 'end', requiredDate: apr(8), predDate: apr(8) });
 
 		const [pred2, succ2] = pair([8, 28], [1, 8]);
 		expect(checkConstraint('SF', pred2, succ2)).toBeNull();
 	});
 
-	it('milestone predecessors constrain by their single date', () => {
-		// Start-only milestone at Apr 7: FS successors must start Apr 7 or later.
+	it('milestone predecessors are zero-duration: FS successors may start the same day', () => {
 		const milestone = makeTask('kickoff', { startDate: apr(7), isMilestone: true });
 		const early = makeTask('early', { startDate: apr(5), endDate: apr(15) });
-		expect(checkConstraint('FS', milestone, early)).toEqual({ fixField: 'start', requiredDate: apr(7) });
+		expect(checkConstraint('FS', milestone, early)).toEqual({ fixField: 'start', requiredDate: apr(7), predDate: apr(7) });
 		expect(checkConstraint('FF', milestone, early)).toBeNull(); // early ends Apr 15 >= Apr 7
 
 		const onTime = makeTask('onTime', { startDate: apr(7), endDate: apr(15) });
 		expect(checkConstraint('FS', milestone, onTime)).toBeNull();
 	});
 
-	it('timeEstimate predecessors finish after their estimated workdays', () => {
-		// Apr 1 + 16h at 8h/day → finishes Apr 3.
+	it('timeEstimate predecessors finish on their last estimated workday', () => {
+		// Apr 1 + 16h at 8h/day covers Apr 1–2, so FS successors start Apr 3.
 		const est = makeTask('est', { startDate: apr(1), timeEstimate: 16 * 60 });
 		const succ = makeTask('succ', { startDate: apr(2), endDate: apr(10) });
-		expect(checkConstraint('FS', est, succ)).toEqual({ fixField: 'start', requiredDate: apr(3) });
+		expect(checkConstraint('FS', est, succ)).toEqual({ fixField: 'start', requiredDate: apr(3), predDate: apr(2) });
 	});
 
-	it('deadline-only predecessors start the day before their due date', () => {
+	it('deadline-only predecessors occupy their due day', () => {
 		const deadline = makeTask('deadline', { endDate: apr(15) });
 		const succ = makeTask('succ', { startDate: apr(10), endDate: apr(20) });
-		expect(checkConstraint('SS', deadline, succ)).toEqual({ fixField: 'start', requiredDate: apr(14) });
+		expect(checkConstraint('SS', deadline, succ)).toEqual({ fixField: 'start', requiredDate: apr(15), predDate: apr(15) });
 	});
 
 	it('a task depending on itself is never a violation', () => {
@@ -113,7 +118,8 @@ describe('detectViolations', () => {
 		expect(violations[0].successor.id).toBe('dev');
 		expect(violations[0].predecessor.id).toBe('design');
 		expect(violations[0].fixField).toBe('start');
-		expect(violations[0].suggestedDate).toEqual(apr(7));
+		// Design finishes (inclusively) on Apr 7 → Development starts Apr 8.
+		expect(violations[0].suggestedDate).toEqual(apr(8));
 		expect(violations[0].description).toContain('Development must start after Design finishes (2026-04-07)');
 	});
 
@@ -125,11 +131,12 @@ describe('detectViolations', () => {
 			endDate: apr(25),
 			dependencies: [dep('testing', 'FS'), dep('docs', 'FS')],
 		});
-		// Start Apr 22 is after docs finish (Apr 21) but before testing finishes (Apr 28).
+		// Start Apr 22 clears docs (finish Apr 21 → start Apr 22 OK) but not
+		// testing (finish Apr 28 → required start Apr 29).
 		const violations = detectViolations([testing, docs, handoff]);
 		expect(violations).toHaveLength(1);
 		expect(violations[0].predecessor.id).toBe('testing');
-		expect(violations[0].suggestedDate).toEqual(apr(28));
+		expect(violations[0].suggestedDate).toEqual(apr(29));
 	});
 
 	it('ignores unresolved dependencies', () => {
@@ -179,10 +186,10 @@ describe('planCascadingFixes', () => {
 		const plan = planCascadingFixes(tasks);
 		expect(plan.converged).toBe(true);
 
-		// B moves to start Apr 10 (duration 3 → ends Apr 13);
+		// A finishes Apr 10 → B starts Apr 11 (span 3 → ends Apr 14);
 		// C was fine on its own but must now follow B's new finish.
-		expect(plan.fixes.get('b')).toMatchObject({ newStart: apr(10), newEnd: apr(13) });
-		expect(plan.fixes.get('c')).toMatchObject({ newStart: apr(13), newEnd: apr(15) });
+		expect(plan.fixes.get('b')).toMatchObject({ newStart: apr(11), newEnd: apr(14) });
+		expect(plan.fixes.get('c')).toMatchObject({ newStart: apr(15), newEnd: apr(17) });
 		expect(plan.fixes.has('a')).toBe(false);
 
 		// The plan must not mutate the input tasks.
@@ -201,7 +208,7 @@ describe('planCascadingFixes', () => {
 		});
 		const plan = planCascadingFixes([testing, docs, handoff]);
 		expect(plan.converged).toBe(true);
-		expect(plan.fixes.get('handoff')).toMatchObject({ newStart: apr(28), newEnd: new Date(2026, 4, 1) });
+		expect(plan.fixes.get('handoff')).toMatchObject({ newStart: apr(29), newEnd: new Date(2026, 4, 2) });
 	});
 
 	it('reports non-convergence for circular dependencies instead of looping', () => {
@@ -221,7 +228,7 @@ describe('planCascadingFixes', () => {
 	it('returns an empty plan when nothing is violated', () => {
 		const a = makeTask('a', { startDate: apr(1), endDate: apr(7) });
 		const b = makeTask('b', {
-			startDate: apr(7), endDate: apr(10),
+			startDate: apr(8), endDate: apr(10),
 			dependencies: [{ targetPath: 'a', targetName: '[[a]]', type: 'FS' as const }],
 		});
 		const plan = planCascadingFixes([a, b]);

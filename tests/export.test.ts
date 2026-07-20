@@ -20,7 +20,7 @@ describe('columnExportLabel', () => {
 	});
 
 	it('week zoom: "Wnn YYYY"', () => {
-		const config = makeConfig(new Date(2026, 3, 5), new Date(2026, 3, 11), 'week');
+		const config = makeConfig(new Date(2026, 3, 6), new Date(2026, 3, 12), 'week');
 		const [col] = generateColumns(config);
 		expect(columnExportLabel(col, 'week')).toBe('W15 2026');
 	});
@@ -72,13 +72,13 @@ describe('exportToTSV', () => {
 
 		const design = lines[2].split('\t');
 		expect(design.slice(0, 7)).toEqual(
-			['Design', 'done', 'high', '2026-04-01', '2026-04-07', '6', ''],
+			['Design', 'done', 'high', '2026-04-01', '2026-04-07', '7', ''],
 		);
 		expect(design.slice(7)).toEqual(['█', '', '']); // April only
 
 		const launch = lines[3].split('\t');
 		expect(launch.slice(0, 7)).toEqual(
-			['Launch', 'to-do', 'high', '2026-05-22', '2026-05-28', '6', '[[design]] (FS)'],
+			['Launch', 'to-do', 'high', '2026-05-22', '2026-05-28', '7', '[[design]] (FS)'],
 		);
 		expect(launch.slice(7)).toEqual(['', '█', '']); // May only
 	});

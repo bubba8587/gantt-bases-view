@@ -79,11 +79,11 @@ describe('extractTask', () => {
 		}), settings).isMilestone).toBe(true);
 	});
 
-	it('marks same-day start/end tasks as milestones', () => {
+	it('treats same-day start/end as a 1-day task, not a milestone', () => {
 		const task = extractTask(makeEntry('a.md', {
 			'note.scheduled': '2026-04-01', 'note.due': '2026-04-01',
 		}), settings);
-		expect(task.isMilestone).toBe(true);
+		expect(task.isMilestone).toBe(false);
 	});
 });
 

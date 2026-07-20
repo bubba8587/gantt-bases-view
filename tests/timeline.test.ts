@@ -89,9 +89,9 @@ describe('generateColumns', () => {
 		expect(cols[2].group).toBe('May 2026');
 	});
 
-	it('week zoom: ISO week labels from Sunday-snapped columns', () => {
-		// Sun Apr 5 2026 — the ISO week containing Mon Apr 6 is W15.
-		const config = makeConfig(new Date(2026, 3, 5), new Date(2026, 3, 18), 'week');
+	it('week zoom: ISO week labels from Monday-snapped columns', () => {
+		// Mon Apr 6 2026 starts ISO week 15.
+		const config = makeConfig(new Date(2026, 3, 6), new Date(2026, 3, 19), 'week');
 		const cols = generateColumns(config);
 		expect(cols.map(c => c.label)).toEqual(['W15', 'W16']);
 		expect(cols[0].group).toBe('2026');
@@ -137,9 +137,15 @@ describe('getTaskBarBounds', () => {
 	const config = makeConfig(new Date(2026, 3, 1), new Date(2026, 4, 1), 'day');
 	const ppd = getPixelsPerDay('day');
 
-	it('renders a normal start→end bar', () => {
+	it('renders a normal start→end bar with an inclusive end date', () => {
+		// Apr 3 → Apr 8 occupies 6 days, ending at the end of the 8th.
 		const task = makeTask('t', { startDate: new Date(2026, 3, 3), endDate: new Date(2026, 3, 8) });
-		expect(getTaskBarBounds(task, config)).toEqual({ left: 2 * ppd, width: 5 * ppd });
+		expect(getTaskBarBounds(task, config)).toEqual({ left: 2 * ppd, width: 6 * ppd });
+	});
+
+	it('same-day start/end renders as a 1-day bar', () => {
+		const task = makeTask('t', { startDate: new Date(2026, 3, 3), endDate: new Date(2026, 3, 3) });
+		expect(getTaskBarBounds(task, config)).toEqual({ left: 2 * ppd, width: ppd });
 	});
 
 	it('returns null when the task has no dates', () => {
@@ -156,9 +162,9 @@ describe('getTaskBarBounds', () => {
 		expect(getTaskBarBounds(task, config)).toEqual({ left: 2 * ppd, width: 2 * ppd });
 	});
 
-	it('deadline-only: 1-day bar ending on the due date', () => {
+	it('deadline-only: a 1-day bar occupying the due date', () => {
 		const task = makeTask('t', { endDate: new Date(2026, 3, 15) });
-		expect(getTaskBarBounds(task, config)).toEqual({ left: 13 * ppd, width: ppd });
+		expect(getTaskBarBounds(task, config)).toEqual({ left: 14 * ppd, width: ppd });
 	});
 
 	it('reversed dates: width never goes negative', () => {
