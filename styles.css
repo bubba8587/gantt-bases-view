@@ -654,7 +654,7 @@
 }
 
 .gbv-popup-dep-type {
-  width: 52px;
+  width: 105px;
   flex-shrink: 0;
   padding: 3px 4px;
   border: 1px solid var(--background-modifier-border);

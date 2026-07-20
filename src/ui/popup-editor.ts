@@ -1,8 +1,23 @@
 import { AbstractInputSuggest, TFile, setIcon } from 'obsidian';
 import type { App } from 'obsidian';
-import type { GanttTask, PluginSettings } from '../core/model.ts';
+import type { DependencyType, GanttTask, PluginSettings } from '../core/model.ts';
 import { DEP_TYPES, DEP_TYPE_TO_FIELD, stripWikilink, DEFAULT_PLUGIN_SETTINGS } from '../core/model.ts';
 import { formatDate } from '../core/timeline.ts';
+
+/** Row labels that read as a sentence with the chips: "starts after [Task 2]". */
+const DEP_TYPE_ROW_LABELS: Record<DependencyType, string> = {
+	FS: 'starts after',
+	SS: 'starts with',
+	FF: 'finishes with',
+	SF: 'finishes after start of',
+};
+
+const DEP_TYPE_TOOLTIPS: Record<DependencyType, string> = {
+	FS: 'FS (blockedBy) — this task starts after the linked task finishes',
+	SS: 'SS (syncStart) — this task starts no earlier than the linked task starts',
+	FF: 'FF (syncFinish) — this task finishes no earlier than the linked task finishes',
+	SF: 'SF (finishAfterStart) — this task finishes no earlier than the linked task starts',
+};
 
 /** Native Obsidian file-name autocomplete wired to a chips-style dep input. */
 class ChipFileSuggest extends AbstractInputSuggest<TFile> {
@@ -203,7 +218,8 @@ export function openPopupEditor(
 
 	const depsTitle = document.createElement('span');
 	depsTitle.className = 'gbv-popup-deps-header';
-	depsTitle.textContent = 'Dependencies';
+	depsTitle.textContent = 'This task…';
+	depsTitle.title = 'Linked notes are predecessors — this task schedules around them.';
 
 	const addDepBtn = document.createElement('button');
 	addDepBtn.className = 'gbv-popup-deps-add';
@@ -225,17 +241,25 @@ export function openPopupEditor(
 		const row = document.createElement('div');
 		row.className = 'gbv-popup-dep-edit-row';
 
+		// Options read as a sentence with the chips that follow, so the
+		// dependency direction is unambiguous: "[starts after] [Task 2]" means
+		// Task 2 is the predecessor and this task waits for it.
 		const typeSel = document.createElement('select');
 		typeSel.className = 'gbv-popup-dep-type';
 		for (const t of DEP_TYPES) {
 			const o = document.createElement('option');
 			o.value = t;
-			o.textContent = t;
+			o.textContent = DEP_TYPE_ROW_LABELS[t];
+			o.title = DEP_TYPE_TOOLTIPS[t];
 			if (t === type) o.selected = true;
 			typeSel.appendChild(o);
 		}
 		typeSel.dataset.depType = type;
-		typeSel.addEventListener('change', () => { typeSel.dataset.depType = typeSel.value; });
+		typeSel.title = DEP_TYPE_TOOLTIPS[type as DependencyType] ?? '';
+		typeSel.addEventListener('change', () => {
+			typeSel.dataset.depType = typeSel.value;
+			typeSel.title = DEP_TYPE_TOOLTIPS[typeSel.value as DependencyType] ?? '';
+		});
 
 		// Chips area: existing items rendered as deletable tags + blank input at end
 		const chipsArea = document.createElement('div');

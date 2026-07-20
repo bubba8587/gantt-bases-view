@@ -12,7 +12,7 @@ Uses `scheduled`, `due`, `status`, and `priority` by default. Start/end date pro
 
 ### Dependencies
 
-Wikilink arrays, same pattern as TaskNotes' `blockedBy`:
+Wikilink arrays, same pattern as TaskNotes' `blockedBy`. Dependencies are declared on the **successor** — the linked notes are its **predecessors**. `blockedBy: [[Task A]]` in Task B means *Task B starts after Task A finishes*, and the arrow draws from Task A's finish to Task B's start.
 
 | Field | Type | Meaning |
 |-------|------|---------|

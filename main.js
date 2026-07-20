@@ -999,6 +999,18 @@ async function writeDragDates(app, task, result, pluginSettings) {
 
 // src/ui/popup-editor.ts
 var import_obsidian = require("obsidian");
+var DEP_TYPE_ROW_LABELS = {
+  FS: "starts after",
+  SS: "starts with",
+  FF: "finishes with",
+  SF: "finishes after start of"
+};
+var DEP_TYPE_TOOLTIPS = {
+  FS: "FS (blockedBy) \u2014 this task starts after the linked task finishes",
+  SS: "SS (syncStart) \u2014 this task starts no earlier than the linked task starts",
+  FF: "FF (syncFinish) \u2014 this task finishes no earlier than the linked task finishes",
+  SF: "SF (finishAfterStart) \u2014 this task finishes no earlier than the linked task starts"
+};
 var ChipFileSuggest = class extends import_obsidian.AbstractInputSuggest {
   constructor(app, input, onSelect) {
     super(app, input);
@@ -1132,7 +1144,8 @@ function openPopupEditor(task, anchorEl, app, onUpdate, pluginSettings) {
   depsHeaderRow.className = "gbv-popup-deps-header-row";
   const depsTitle = document.createElement("span");
   depsTitle.className = "gbv-popup-deps-header";
-  depsTitle.textContent = "Dependencies";
+  depsTitle.textContent = "This task\u2026";
+  depsTitle.title = "Linked notes are predecessors \u2014 this task schedules around them.";
   const addDepBtn = document.createElement("button");
   addDepBtn.className = "gbv-popup-deps-add";
   addDepBtn.textContent = "+ Add";
@@ -1152,13 +1165,16 @@ function openPopupEditor(task, anchorEl, app, onUpdate, pluginSettings) {
     for (const t of DEP_TYPES) {
       const o = document.createElement("option");
       o.value = t;
-      o.textContent = t;
+      o.textContent = DEP_TYPE_ROW_LABELS[t];
+      o.title = DEP_TYPE_TOOLTIPS[t];
       if (t === type) o.selected = true;
       typeSel.appendChild(o);
     }
     typeSel.dataset.depType = type;
+    typeSel.title = DEP_TYPE_TOOLTIPS[type] ?? "";
     typeSel.addEventListener("change", () => {
       typeSel.dataset.depType = typeSel.value;
+      typeSel.title = DEP_TYPE_TOOLTIPS[typeSel.value] ?? "";
     });
     const chipsArea = document.createElement("div");
     chipsArea.className = "gbv-dep-chips-area";
