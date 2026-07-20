@@ -57,6 +57,26 @@ function ensureDefs(svg: SVGSVGElement): void {
 	defs.appendChild(makeMarker(M_VIOL, COLOR_VIOLATED));
 }
 
+/**
+ * Highlights the dependency arrows attached to whichever bar the pointer is
+ * over. Delegated on the bars area so it survives arrow re-renders.
+ */
+export function wireDependencyHover(barsArea: HTMLElement, svg: SVGSVGElement): void {
+	const setHighlight = (taskId: string | null) => {
+		for (const path of Array.from(svg.querySelectorAll('path.gbv-dep-arrow'))) {
+			const attached = taskId !== null &&
+				(path.getAttribute('data-pred') === taskId || path.getAttribute('data-succ') === taskId);
+			path.classList.toggle('is-active', attached);
+		}
+	};
+
+	barsArea.addEventListener('pointerover', (e) => {
+		const bar = (e.target as HTMLElement).closest?.('.gbv-bar, .gbv-milestone') as HTMLElement | null;
+		setHighlight(bar?.dataset.taskId ?? null);
+	});
+	barsArea.addEventListener('pointerleave', () => setHighlight(null));
+}
+
 function buildPath(
 	sx: number, sy: number,
 	tx: number, ty: number,
@@ -132,6 +152,8 @@ export function renderDependencies(
 			path.setAttribute('marker-end', `url(#${marker})`);
 			path.classList.add('gbv-dep-arrow');
 			path.setAttribute('data-dep-type', dep.type);
+			path.setAttribute('data-pred', predecessor.id);
+			path.setAttribute('data-succ', successor.id);
 			svg.appendChild(path);
 		}
 	}

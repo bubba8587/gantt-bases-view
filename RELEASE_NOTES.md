@@ -1,13 +1,13 @@
 ## What's New
 
-- **Layered architecture** — source restructured into pure `core/` logic (testable, DOM-free), `ui/` rendering, and `settings/` modules
-- **Correctness fixes**
-  - Copy TSV no longer mangles week/month/quarter column headers
-  - Bars stay aligned with the column grid across DST transitions
-  - Milestone detection works with an empty `timeEstimate` field
-  - Dependency wikilinks with folder paths (`[[Projects/Note]]`) now resolve
-- **Unified dependency logic** — FS/SS/FF/SF constraint checking is now a single implementation shared by the dependency arrows and the Fix Schedule panel
-- **Test suite & CI** — 58 unit tests over the core modules, run in multiple timezones on GitHub Actions
-- **Release automation** — pushing a version tag now builds and publishes the release automatically
+- **Drag to reschedule** — drag a bar to move a task in time, or drag its left/right edge to change just the start or end date. Deltas snap to whole days, a tooltip shows the dates while you drag, and the result is written straight to frontmatter. Milestones drag too.
+- **Dependency arrows fixed** — arrows now run predecessor → successor and connect the correct bar edges (FS: finish → start, SF: start → finish). Previously FS and SF arrows swept between the wrong ends of the bars.
+- **Hover highlighting** — hovering a bar highlights the dependency arrows connected to it.
+- **Smarter Fix Schedule**
+  - Fixes that move a start date now shift the end date with it, preserving the task's duration (no more fixes that push a start past its own due date)
+  - **Apply All cascades**: fixing one task ripples through the tasks that depend on it until the whole schedule is consistent, with circular dependencies detected and reported
+  - Milestones and estimate-only tasks now constrain their successors (a task `blockedBy` a milestone is checked against the milestone's date)
+- **Weekend shading** at day and week zoom, with weekend day headers dimmed
+- **Bar tooltips** — hover any bar or milestone for its title, dates, status, and priority
 
-No changes to frontmatter format, settings, or vault data.
+22 new unit tests cover the drag math, cascading fixes, and arrow geometry. No changes to frontmatter format, settings, or vault data.

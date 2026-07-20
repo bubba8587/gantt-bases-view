@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { checkConstraint, detectViolations, isViolated } from '../src/core/schedule.ts';
+import { checkConstraint, detectViolations, isViolated, fixDatesFor, planCascadingFixes } from '../src/core/schedule.ts';
 import { makeTask } from './helpers.ts';
 import type { GanttTask, TaskDependency, DependencyType } from '../src/core/model.ts';
 
@@ -139,5 +139,93 @@ describe('detectViolations', () => {
 			dependencies: [{ targetPath: '', targetName: '[[Missing]]', type: 'FS' }],
 		});
 		expect(detectViolations([t])).toEqual([]);
+	});
+});
+
+describe('fixDatesFor', () => {
+	it('start fixes shift the end too, preserving duration', () => {
+		const task = makeTask('t', { startDate: apr(15), endDate: apr(18) });
+		expect(fixDatesFor(task, 'start', apr(28))).toEqual({ newStart: apr(28), newEnd: new Date(2026, 4, 1) });
+	});
+
+	it('start fixes normalize reversed dates to zero length', () => {
+		const task = makeTask('t', { startDate: apr(28), endDate: apr(1) });
+		expect(fixDatesFor(task, 'start', apr(21))).toEqual({ newStart: apr(21), newEnd: apr(21) });
+	});
+
+	it('end fixes leave the start alone', () => {
+		const task = makeTask('t', { startDate: apr(14), endDate: apr(17) });
+		expect(fixDatesFor(task, 'end', apr(21))).toEqual({ newStart: apr(14), newEnd: apr(21) });
+	});
+});
+
+describe('planCascadingFixes', () => {
+	function fsChain() {
+		// A (1–10) ← B (5–8, FS on A) ← C (9–11, FS on B)
+		const a = makeTask('a', { startDate: apr(1), endDate: apr(10) });
+		const b = makeTask('b', {
+			startDate: apr(5), endDate: apr(8),
+			dependencies: [{ targetPath: 'a', targetName: '[[a]]', type: 'FS' as const }],
+		});
+		const c = makeTask('c', {
+			startDate: apr(9), endDate: apr(11),
+			dependencies: [{ targetPath: 'b', targetName: '[[b]]', type: 'FS' as const }],
+		});
+		return [a, b, c];
+	}
+
+	it('ripples fixes through dependent tasks', () => {
+		const tasks = fsChain();
+		const plan = planCascadingFixes(tasks);
+		expect(plan.converged).toBe(true);
+
+		// B moves to start Apr 10 (duration 3 → ends Apr 13);
+		// C was fine on its own but must now follow B's new finish.
+		expect(plan.fixes.get('b')).toMatchObject({ newStart: apr(10), newEnd: apr(13) });
+		expect(plan.fixes.get('c')).toMatchObject({ newStart: apr(13), newEnd: apr(15) });
+		expect(plan.fixes.has('a')).toBe(false);
+
+		// The plan must not mutate the input tasks.
+		expect(tasks[1].startDate).toEqual(apr(5));
+	});
+
+	it('multi-dep tasks settle on the strictest requirement', () => {
+		const testing = makeTask('testing', { startDate: apr(8), endDate: apr(28) });
+		const docs = makeTask('docs', { startDate: apr(14), endDate: apr(21) });
+		const handoff = makeTask('handoff', {
+			startDate: apr(15), endDate: apr(18),
+			dependencies: [
+				{ targetPath: 'docs', targetName: '[[docs]]', type: 'FS' as const },
+				{ targetPath: 'testing', targetName: '[[testing]]', type: 'FS' as const },
+			],
+		});
+		const plan = planCascadingFixes([testing, docs, handoff]);
+		expect(plan.converged).toBe(true);
+		expect(plan.fixes.get('handoff')).toMatchObject({ newStart: apr(28), newEnd: new Date(2026, 4, 1) });
+	});
+
+	it('reports non-convergence for circular dependencies instead of looping', () => {
+		// A must start after B finishes and vice versa — unsatisfiable.
+		const a = makeTask('a', {
+			startDate: apr(1), endDate: apr(5),
+			dependencies: [{ targetPath: 'b', targetName: '[[b]]', type: 'FS' as const }],
+		});
+		const b = makeTask('b', {
+			startDate: apr(1), endDate: apr(5),
+			dependencies: [{ targetPath: 'a', targetName: '[[a]]', type: 'FS' as const }],
+		});
+		const plan = planCascadingFixes([a, b]);
+		expect(plan.converged).toBe(false);
+	});
+
+	it('returns an empty plan when nothing is violated', () => {
+		const a = makeTask('a', { startDate: apr(1), endDate: apr(7) });
+		const b = makeTask('b', {
+			startDate: apr(7), endDate: apr(10),
+			dependencies: [{ targetPath: 'a', targetName: '[[a]]', type: 'FS' as const }],
+		});
+		const plan = planCascadingFixes([a, b]);
+		expect(plan.converged).toBe(true);
+		expect(plan.fixes.size).toBe(0);
 	});
 });

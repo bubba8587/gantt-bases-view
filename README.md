@@ -38,12 +38,14 @@ Values already used in your vault are appended to the dropdowns automatically.
 - **Zoom** — Day / Week / Month / 1Y / 2Y / 3Y
 - **Today** — scroll to today
 - **Color** — color bars by status, priority, or none (colors sync from TaskNotes)
-- **Fix Schedule** — shows dependency violations with suggested fixes
+- **Fix Schedule** — shows dependency violations with suggested fixes; start-date fixes preserve task duration, and **Apply All** cascades through dependent tasks until the schedule is consistent
 - **Copy TSV** — export for pasting into spreadsheets
 
 ## Editing
 
 Click any bar or sidebar label to edit dates, status, priority, and dependencies inline, or open the note.
+
+Drag a bar to move the task in time, or drag its left/right edge to change just the start or end date — snapped to whole days and written straight to frontmatter. Dependency arrows run predecessor → successor (FS connects the predecessor's finish to the successor's start) and light up when you hover a connected bar.
 
 ## Example Notes
 

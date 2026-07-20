@@ -8,10 +8,23 @@ import {
 	type PluginSettings,
 } from '../core/model.ts';
 import { getBarColor } from './colors.ts';
+import { formatDate } from '../core/timeline.ts';
 
 interface BarBounds {
 	left: number;
 	width: number;
+}
+
+function taskTooltip(task: GanttTask): string {
+	const lines = [task.title || task.file.basename];
+	if (task.startDate || task.endDate) {
+		const start = task.startDate ? formatDate(task.startDate) : '—';
+		const end = task.endDate ? formatDate(task.endDate) : '—';
+		lines.push(task.isMilestone && !task.endDate ? start : `${start} → ${end}`);
+	}
+	const meta = [task.status, task.priority].filter(Boolean).join(' · ');
+	if (meta) lines.push(meta);
+	return lines.join('\n');
 }
 
 /**
@@ -32,6 +45,8 @@ export function createTaskBar(
 	const bar = document.createElement('div');
 	bar.className = 'gbv-bar';
 	bar.dataset.taskId = task.id;
+	bar.title = taskTooltip(task);
+	bar.setAttribute('aria-label', bar.title);
 
 	if (task.status === 'done') {
 		bar.classList.add('gbv-bar--done');
@@ -81,6 +96,8 @@ function createMilestoneDiamond(
 	const el = document.createElement('div');
 	el.className = 'gbv-milestone';
 	el.dataset.taskId = task.id;
+	el.title = taskTooltip(task);
+	el.setAttribute('aria-label', el.title);
 	if (task.status === 'done') el.classList.add('gbv-bar--done');
 	el.style.left = `${bounds.left - size / 2}px`;
 	el.style.top = `${Math.round((ROW_HEIGHT - size) / 2)}px`;

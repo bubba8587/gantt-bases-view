@@ -1071,3 +1071,55 @@ body.gbv-resizing {
 .gbv-settings-wide-input {
   width: 100%;
 }
+
+/* ── Weekend shading (day/week zoom) ───────────────────────── */
+.gbv-weekend-shading .gbv-bar-row {
+  background-image: repeating-linear-gradient(
+    to right,
+    var(--gbv-weekend-shade, rgba(128, 128, 128, 0.08)) 0,
+    var(--gbv-weekend-shade, rgba(128, 128, 128, 0.08)) var(--gbv-weekend-width),
+    transparent var(--gbv-weekend-width),
+    transparent var(--gbv-weekend-period)
+  );
+  background-position-x: var(--gbv-weekend-offset);
+}
+
+.gbv-header-day.is-weekend {
+  color: var(--text-faint);
+}
+
+/* ── Bar drag & resize ─────────────────────────────────────── */
+body.gbv-bar-dragging,
+body.gbv-bar-dragging * {
+  cursor: grabbing !important;
+  user-select: none;
+}
+
+body.gbv-bar-resizing,
+body.gbv-bar-resizing * {
+  cursor: ew-resize !important;
+  user-select: none;
+}
+
+.gbv-drag-tooltip {
+  position: fixed;
+  z-index: 10001;
+  padding: 3px 8px;
+  border-radius: var(--radius-s, 4px);
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  box-shadow: var(--shadow-s, 0 2px 8px rgba(0, 0, 0, 0.15));
+}
+
+/* ── Dependency arrow hover highlight ──────────────────────── */
+.gbv-dep-arrow {
+  transition: opacity 0.1s ease;
+}
+
+.gbv-dep-arrow.is-active {
+  opacity: 1 !important;
+}

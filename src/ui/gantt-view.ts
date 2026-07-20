@@ -37,7 +37,8 @@ import { exportToTSV } from '../core/export.ts';
 import { buildGanttScaffold, setTimelineSize } from './scaffold.ts';
 import { renderToolbar } from './toolbar.ts';
 import { createTaskBar, createSidebarLabel } from './task-bar.ts';
-import { renderDependencies } from './dependency-arrows.ts';
+import { renderDependencies, wireDependencyHover } from './dependency-arrows.ts';
+import { makeBarDraggable, consumePostDragClick } from './bar-drag.ts';
 import { openPopupEditor, closeActivePopup } from './popup-editor.ts';
 import { openViolationPanel, closeViolationPanel } from './violation-panel.ts';
 
@@ -159,14 +160,15 @@ export class GanttView extends BasesView {
 				scrollArea.scrollLeft = Math.max(0, offset - scrollArea.clientWidth / 2);
 			},
 			onFixSchedule: () => {
-				openViolationPanel(violations, this.app, () => this.render(), this.plugin.settings);
+				openViolationPanel(violations, tasks, this.app, () => this.render(), this.plugin.settings);
 			},
 			onExport: async () => {
 				await navigator.clipboard.writeText(exportToTSV(groups, timelineConfig));
 			},
 		});
 
-		this.renderColumnHeaders(headerRow, columns);
+		this.renderColumnHeaders(headerRow, columns, settings.zoom);
+		this.applyWeekendShading(barsArea, timelineConfig);
 
 		const { taskRowMap, totalHeightPx } = this.renderTaskRows(
 			groups, sidebar, barsArea, timelineConfig, settings, violatingTaskIds, totalWidth,
@@ -180,6 +182,7 @@ export class GanttView extends BasesView {
 
 		if (settings.showDependencies) {
 			renderDependencies(svgLayer, tasks, taskRowMap, timelineConfig, settings);
+			wireDependencyHover(barsArea, svgLayer);
 		}
 
 		// Restore scroll position (use requestAnimationFrame so layout is settled).
@@ -246,7 +249,22 @@ export class GanttView extends BasesView {
 		return stripWikilink(raw) || 'Ungrouped';
 	}
 
-	private renderColumnHeaders(headerRow: HTMLElement, columns: ColumnHeader[]): void {
+	/**
+	 * Shades Saturday+Sunday bands at day and week zoom. One repeating
+	 * gradient (7-day period, phase-shifted to the first Saturday) instead of
+	 * per-day elements; the custom properties inherit into every bar row.
+	 */
+	private applyWeekendShading(barsArea: HTMLElement, config: TimelineConfig): void {
+		if (config.zoom !== 'day' && config.zoom !== 'week') return;
+		const ppd = config.pixelsPerDay;
+		const daysToSaturday = (6 - config.startDate.getDay() + 7) % 7;
+		barsArea.classList.add('gbv-weekend-shading');
+		barsArea.style.setProperty('--gbv-weekend-offset', `${daysToSaturday * ppd}px`);
+		barsArea.style.setProperty('--gbv-weekend-width', `${2 * ppd}px`);
+		barsArea.style.setProperty('--gbv-weekend-period', `${7 * ppd}px`);
+	}
+
+	private renderColumnHeaders(headerRow: HTMLElement, columns: ColumnHeader[], zoom: ZoomLevel): void {
 		const topRow = headerRow.createEl('div', { cls: 'gbv-header-top-row' });
 		const botRow = headerRow.createEl('div', { cls: 'gbv-header-bot-row' });
 
@@ -273,6 +291,8 @@ export class GanttView extends BasesView {
 
 			// Column label (bottom row)
 			const cell = botRow.createEl('div', { text: col.label, cls: 'gbv-header-cell gbv-header-day' });
+			const dow = col.startDate.getDay();
+			if (zoom === 'day' && (dow === 0 || dow === 6)) cell.classList.add('is-weekend');
 			cell.style.width = `${col.widthPx}px`;
 			cell.style.minWidth = `${col.widthPx}px`;
 			cell.style.flexShrink = '0';
@@ -331,8 +351,12 @@ export class GanttView extends BasesView {
 				if (bounds) {
 					const barEl = createTaskBar(task, bounds, settings.colorBy, settings.showPriority, this.plugin.settings);
 					barRowEl.appendChild(barEl);
+					makeBarDraggable(barEl, task, timelineConfig, this.app, this.plugin.settings, {
+						resizable: !task.isMilestone,
+					});
 					barEl.addEventListener('click', (e) => {
 						e.stopPropagation();
+						if (consumePostDragClick(barEl)) return;
 						openPopupEditor(task, barEl, this.app, () => this.render(), this.plugin.settings);
 					});
 				}

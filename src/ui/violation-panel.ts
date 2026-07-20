@@ -1,8 +1,9 @@
-import type { App } from 'obsidian';
-import type { PluginSettings } from '../core/model.ts';
+import { Notice } from 'obsidian';
+import type { App, TFile } from 'obsidian';
+import type { GanttTask, PluginSettings } from '../core/model.ts';
 import { DEFAULT_PLUGIN_SETTINGS } from '../core/model.ts';
 import type { ScheduleViolation } from '../core/schedule.ts';
-import { DEP_VERBS } from '../core/schedule.ts';
+import { DEP_VERBS, fixDatesFor, planCascadingFixes } from '../core/schedule.ts';
 import { formatDate } from '../core/timeline.ts';
 
 let activePanel: HTMLElement | null = null;
@@ -14,20 +15,43 @@ export function closeViolationPanel(): void {
 	}
 }
 
-async function applyViolationFix(app: App, violation: ScheduleViolation, pluginSettings?: PluginSettings): Promise<void> {
-	const { successor, fixField, suggestedDate } = violation;
-	const dateStr = formatDate(suggestedDate);
+async function writeTaskDates(
+	app: App,
+	file: TFile,
+	newStart: Date | null,
+	newEnd: Date | null,
+	pluginSettings?: PluginSettings,
+): Promise<void> {
 	const startKey = pluginSettings?.startDateProp || DEFAULT_PLUGIN_SETTINGS.startDateProp;
 	const endKey = pluginSettings?.endDateProp || DEFAULT_PLUGIN_SETTINGS.endDateProp;
-	const frontmatterKey = fixField === 'start' ? startKey : endKey;
-	await app.fileManager.processFrontMatter(
-		successor.file,
-		(fm: Record<string, unknown>) => { fm[frontmatterKey] = dateStr; },
-	);
+	await app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
+		if (newStart) fm[startKey] = formatDate(newStart);
+		if (newEnd) fm[endKey] = formatDate(newEnd);
+	});
+}
+
+/** Applies one violation's fix, preserving the task's duration on start moves. */
+async function applyViolationFix(app: App, violation: ScheduleViolation, pluginSettings?: PluginSettings): Promise<void> {
+	const { successor, fixField, suggestedDate } = violation;
+	const { newStart, newEnd } = fixDatesFor(successor, fixField, suggestedDate);
+	await writeTaskDates(app, successor.file, newStart, newEnd, pluginSettings);
+}
+
+function fixHint(violation: ScheduleViolation): string {
+	const { successor, fixField, suggestedDate } = violation;
+	let hint = `Suggested: move ${fixField} to ${formatDate(suggestedDate)}`;
+	if (fixField === 'start') {
+		const { newEnd } = fixDatesFor(successor, fixField, suggestedDate);
+		if (newEnd && successor.endDate && newEnd.getTime() !== successor.endDate.getTime()) {
+			hint += ` (end follows to ${formatDate(newEnd)})`;
+		}
+	}
+	return hint;
 }
 
 export function openViolationPanel(
 	violations: ScheduleViolation[],
+	tasks: GanttTask[],
 	app: App,
 	onUpdate: () => void,
 	pluginSettings?: PluginSettings,
@@ -102,7 +126,7 @@ export function openViolationPanel(
 
 		const subText = document.createElement('div');
 		subText.className = 'gbv-violation-fix-hint';
-		subText.textContent = `Suggested: move ${violation.fixField} to ${formatDate(violation.suggestedDate)}`;
+		subText.textContent = fixHint(violation);
 
 		textBlock.appendChild(mainText);
 		textBlock.appendChild(subText);
@@ -132,10 +156,19 @@ export function openViolationPanel(
 		const applyAllBtn = document.createElement('button');
 		applyAllBtn.className = 'gbv-violation-apply-all';
 		applyAllBtn.textContent = 'Apply All';
+		applyAllBtn.title = 'Fix every conflict, cascading through dependent tasks';
 
 		applyAllBtn.addEventListener('click', async () => {
-			for (const v of [...remainingViolations]) {
-				await applyViolationFix(app, v, pluginSettings);
+			// Cascade: fixing one task can push tasks that depend on it, so plan
+			// the whole graph to a stable state and write each file once.
+			const plan = planCascadingFixes(tasks);
+			for (const { task, newStart, newEnd } of plan.fixes.values()) {
+				await writeTaskDates(app, task.file, newStart, newEnd, pluginSettings);
+			}
+			if (!plan.converged) {
+				new Notice('Some conflicts could not be fully resolved — check for circular dependencies.');
+			} else if (plan.fixes.size > 0) {
+				new Notice(`Updated ${plan.fixes.size} task${plan.fixes.size > 1 ? 's' : ''}.`);
 			}
 			onUpdate();
 			closeViolationPanel();

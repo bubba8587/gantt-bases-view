@@ -23,10 +23,10 @@ __export(main_exports, {
   default: () => GanttBasesViewPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian6 = require("obsidian");
+var import_obsidian7 = require("obsidian");
 
 // src/ui/gantt-view.ts
-var import_obsidian2 = require("obsidian");
+var import_obsidian3 = require("obsidian");
 
 // src/core/model.ts
 var ROW_HEIGHT = 36;
@@ -404,6 +404,46 @@ function checkConstraint(type, predecessor, successor) {
 function isViolated(dep, predecessor, successor) {
   return checkConstraint(dep.type, predecessor, successor) !== null;
 }
+function fixDatesFor(task, fixField, requiredDate) {
+  if (fixField === "start") {
+    let newEnd = task.endDate;
+    if (task.startDate && task.endDate) {
+      const duration = Math.max(0, daysBetween(task.startDate, task.endDate));
+      newEnd = addDays(requiredDate, duration);
+    }
+    return { newStart: requiredDate, newEnd };
+  }
+  return { newStart: task.startDate, newEnd: requiredDate };
+}
+function planCascadingFixes(tasks) {
+  const working = tasks.map((t) => ({ ...t }));
+  const maxPasses = tasks.length + 1;
+  let converged = false;
+  for (let pass = 0; pass < maxPasses; pass++) {
+    const violations = detectViolations(working);
+    if (violations.length === 0) {
+      converged = true;
+      break;
+    }
+    for (const v of violations) {
+      const target = v.successor;
+      const current = v.fixField === "start" ? target.startDate : target.endDate;
+      if (current && current >= v.suggestedDate) continue;
+      const { newStart, newEnd } = fixDatesFor(target, v.fixField, v.suggestedDate);
+      target.startDate = newStart;
+      target.endDate = newEnd;
+    }
+  }
+  const fixes = /* @__PURE__ */ new Map();
+  for (let i = 0; i < tasks.length; i++) {
+    const original = tasks[i];
+    const updated = working[i];
+    if (updated.startDate?.getTime() !== original.startDate?.getTime() || updated.endDate?.getTime() !== original.endDate?.getTime()) {
+      fixes.set(original.id, { task: original, newStart: updated.startDate, newEnd: updated.endDate });
+    }
+  }
+  return { fixes, converged };
+}
 function detectViolations(tasks) {
   const violations = [];
   const taskById = /* @__PURE__ */ new Map();
@@ -581,6 +621,17 @@ function getBarColor(task, colorBy, pluginSettings) {
 }
 
 // src/ui/task-bar.ts
+function taskTooltip(task) {
+  const lines = [task.title || task.file.basename];
+  if (task.startDate || task.endDate) {
+    const start = task.startDate ? formatDate(task.startDate) : "\u2014";
+    const end = task.endDate ? formatDate(task.endDate) : "\u2014";
+    lines.push(task.isMilestone && !task.endDate ? start : `${start} \u2192 ${end}`);
+  }
+  const meta = [task.status, task.priority].filter(Boolean).join(" \xB7 ");
+  if (meta) lines.push(meta);
+  return lines.join("\n");
+}
 function createTaskBar(task, bounds, colorBy, showPriority = true, pluginSettings) {
   if (task.isMilestone) {
     return createMilestoneDiamond(task, bounds, colorBy, pluginSettings);
@@ -588,6 +639,8 @@ function createTaskBar(task, bounds, colorBy, showPriority = true, pluginSetting
   const bar = document.createElement("div");
   bar.className = "gbv-bar";
   bar.dataset.taskId = task.id;
+  bar.title = taskTooltip(task);
+  bar.setAttribute("aria-label", bar.title);
   if (task.status === "done") {
     bar.classList.add("gbv-bar--done");
   }
@@ -623,6 +676,8 @@ function createMilestoneDiamond(task, bounds, colorBy, pluginSettings) {
   const el = document.createElement("div");
   el.className = "gbv-milestone";
   el.dataset.taskId = task.id;
+  el.title = taskTooltip(task);
+  el.setAttribute("aria-label", el.title);
   if (task.status === "done") el.classList.add("gbv-bar--done");
   el.style.left = `${bounds.left - size / 2}px`;
   el.style.top = `${Math.round((ROW_HEIGHT - size) / 2)}px`;
@@ -708,6 +763,19 @@ function ensureDefs(svg) {
   defs.appendChild(makeMarker(M_NORM, COLOR_NORMAL));
   defs.appendChild(makeMarker(M_VIOL, COLOR_VIOLATED));
 }
+function wireDependencyHover(barsArea, svg) {
+  const setHighlight = (taskId) => {
+    for (const path of Array.from(svg.querySelectorAll("path.gbv-dep-arrow"))) {
+      const attached = taskId !== null && (path.getAttribute("data-pred") === taskId || path.getAttribute("data-succ") === taskId);
+      path.classList.toggle("is-active", attached);
+    }
+  };
+  barsArea.addEventListener("pointerover", (e) => {
+    const bar = e.target.closest?.(".gbv-bar, .gbv-milestone");
+    setHighlight(bar?.dataset.taskId ?? null);
+  });
+  barsArea.addEventListener("pointerleave", () => setHighlight(null));
+}
 function buildPath(sx, sy, tx, ty, exitRight, enterRight) {
   const preferred = exitRight ? sx + ELBOW_GAP : sx - ELBOW_GAP;
   const pivotX = !enterRight ? Math.min(preferred, tx - ELBOW_GAP) : tx - ELBOW_GAP;
@@ -756,9 +824,158 @@ function renderDependencies(svg, tasks, taskRowMap, config, settings) {
       path.setAttribute("marker-end", `url(#${marker})`);
       path.classList.add("gbv-dep-arrow");
       path.setAttribute("data-dep-type", dep.type);
+      path.setAttribute("data-pred", predecessor.id);
+      path.setAttribute("data-succ", successor.id);
       svg.appendChild(path);
     }
   }
+}
+
+// src/core/drag.ts
+function applyDragToDates(task, mode, dayDelta) {
+  if (dayDelta === 0) return null;
+  const { startDate, endDate } = task;
+  const effective = getEffectiveBarDates(task);
+  if (!effective) return null;
+  switch (mode) {
+    case "move":
+      return {
+        newStart: startDate ? addDays(startDate, dayDelta) : null,
+        newEnd: endDate ? addDays(endDate, dayDelta) : null
+      };
+    case "resize-start": {
+      let start = addDays(effective.start, dayDelta);
+      const limit = endDate ?? effective.end;
+      if (start > limit) start = new Date(limit);
+      return { newStart: start, newEnd: null };
+    }
+    case "resize-end": {
+      let end = addDays(effective.end, dayDelta);
+      const limit = startDate ?? effective.start;
+      if (end < limit) end = new Date(limit);
+      return { newStart: null, newEnd: end };
+    }
+  }
+}
+
+// src/ui/bar-drag.ts
+var EDGE_PX = 8;
+var CLICK_THRESHOLD_PX = 3;
+var DRAG_FLAG = "gbvDragJustEnded";
+function consumePostDragClick(el) {
+  if (el.dataset[DRAG_FLAG]) {
+    delete el.dataset[DRAG_FLAG];
+    return true;
+  }
+  return false;
+}
+function modeForPointer(el, clientX, resizable) {
+  if (!resizable) return "move";
+  const rect = el.getBoundingClientRect();
+  const offsetX = clientX - rect.left;
+  if (offsetX <= EDGE_PX) return "resize-start";
+  if (offsetX >= rect.width - EDGE_PX) return "resize-end";
+  return "move";
+}
+function previewDates(task, mode, dayDelta) {
+  const effective = getEffectiveBarDates(task);
+  if (!effective) return null;
+  const result = applyDragToDates(task, mode, dayDelta);
+  if (!result) return effective;
+  return {
+    start: result.newStart ?? effective.start,
+    end: result.newEnd ?? effective.end
+  };
+}
+function makeBarDraggable(barEl, task, config, app, pluginSettings, opts) {
+  let dragging = false;
+  barEl.addEventListener("pointermove", (e) => {
+    if (dragging) return;
+    const mode = modeForPointer(barEl, e.clientX, opts.resizable);
+    barEl.style.cursor = mode === "move" ? "grab" : "ew-resize";
+  });
+  barEl.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const mode = modeForPointer(barEl, e.clientX, opts.resizable);
+    const startClientX = e.clientX;
+    const origLeft = parseFloat(barEl.style.left) || 0;
+    const origWidth = parseFloat(barEl.style.width) || barEl.offsetWidth;
+    let dayDelta = 0;
+    let moved = false;
+    let tooltip = null;
+    dragging = true;
+    barEl.setPointerCapture(e.pointerId);
+    document.body.classList.add(mode === "move" ? "gbv-bar-dragging" : "gbv-bar-resizing");
+    const updateTooltip = (clientX, clientY) => {
+      const dates = previewDates(task, mode, dayDelta);
+      if (!dates) return;
+      if (!tooltip) {
+        tooltip = document.createElement("div");
+        tooltip.className = "gbv-drag-tooltip";
+        document.body.appendChild(tooltip);
+      }
+      tooltip.textContent = `${formatDate(dates.start)} \u2192 ${formatDate(dates.end)}`;
+      tooltip.style.left = `${clientX + 12}px`;
+      tooltip.style.top = `${clientY - 32}px`;
+    };
+    const applyVisual = () => {
+      const dx = dayDelta * config.pixelsPerDay;
+      const minWidth = config.pixelsPerDay;
+      switch (mode) {
+        case "move":
+          barEl.style.left = `${origLeft + dx}px`;
+          break;
+        case "resize-start": {
+          const clamped = Math.min(dx, origWidth - minWidth);
+          barEl.style.left = `${origLeft + clamped}px`;
+          barEl.style.width = `${origWidth - clamped}px`;
+          break;
+        }
+        case "resize-end":
+          barEl.style.width = `${Math.max(origWidth + dx, minWidth)}px`;
+          break;
+      }
+    };
+    const onMove = (ev) => {
+      const dx = ev.clientX - startClientX;
+      if (Math.abs(dx) > CLICK_THRESHOLD_PX) moved = true;
+      dayDelta = Math.round(dx / config.pixelsPerDay);
+      applyVisual();
+      updateTooltip(ev.clientX, ev.clientY);
+    };
+    const finish = async (commit) => {
+      dragging = false;
+      barEl.removeEventListener("pointermove", onMove);
+      barEl.removeEventListener("pointerup", onUp);
+      barEl.removeEventListener("pointercancel", onCancel);
+      document.body.classList.remove("gbv-bar-dragging", "gbv-bar-resizing");
+      tooltip?.remove();
+      if (!moved) return;
+      barEl.dataset[DRAG_FLAG] = "1";
+      const result = commit ? applyDragToDates(task, mode, dayDelta) : null;
+      if (!result) {
+        barEl.style.left = `${origLeft}px`;
+        barEl.style.width = `${origWidth}px`;
+        return;
+      }
+      await writeDragDates(app, task, result, pluginSettings);
+    };
+    const onUp = () => void finish(true);
+    const onCancel = () => void finish(false);
+    barEl.addEventListener("pointermove", onMove);
+    barEl.addEventListener("pointerup", onUp);
+    barEl.addEventListener("pointercancel", onCancel);
+  });
+}
+async function writeDragDates(app, task, result, pluginSettings) {
+  const startKey = pluginSettings?.startDateProp || DEFAULT_PLUGIN_SETTINGS.startDateProp;
+  const endKey = pluginSettings?.endDateProp || DEFAULT_PLUGIN_SETTINGS.endDateProp;
+  await app.fileManager.processFrontMatter(task.file, (fm) => {
+    if (result.newStart) fm[startKey] = formatDate(result.newStart);
+    if (result.newEnd) fm[endKey] = formatDate(result.newEnd);
+  });
 }
 
 // src/ui/popup-editor.ts
@@ -1067,6 +1284,7 @@ function openPopupEditor(task, anchorEl, app, onUpdate, pluginSettings) {
 }
 
 // src/ui/violation-panel.ts
+var import_obsidian2 = require("obsidian");
 var activePanel = null;
 function closeViolationPanel() {
   if (activePanel) {
@@ -1074,20 +1292,31 @@ function closeViolationPanel() {
     activePanel = null;
   }
 }
-async function applyViolationFix(app, violation, pluginSettings) {
-  const { successor, fixField, suggestedDate } = violation;
-  const dateStr = formatDate(suggestedDate);
+async function writeTaskDates(app, file, newStart, newEnd, pluginSettings) {
   const startKey = pluginSettings?.startDateProp || DEFAULT_PLUGIN_SETTINGS.startDateProp;
   const endKey = pluginSettings?.endDateProp || DEFAULT_PLUGIN_SETTINGS.endDateProp;
-  const frontmatterKey = fixField === "start" ? startKey : endKey;
-  await app.fileManager.processFrontMatter(
-    successor.file,
-    (fm) => {
-      fm[frontmatterKey] = dateStr;
-    }
-  );
+  await app.fileManager.processFrontMatter(file, (fm) => {
+    if (newStart) fm[startKey] = formatDate(newStart);
+    if (newEnd) fm[endKey] = formatDate(newEnd);
+  });
 }
-function openViolationPanel(violations, app, onUpdate, pluginSettings) {
+async function applyViolationFix(app, violation, pluginSettings) {
+  const { successor, fixField, suggestedDate } = violation;
+  const { newStart, newEnd } = fixDatesFor(successor, fixField, suggestedDate);
+  await writeTaskDates(app, successor.file, newStart, newEnd, pluginSettings);
+}
+function fixHint(violation) {
+  const { successor, fixField, suggestedDate } = violation;
+  let hint = `Suggested: move ${fixField} to ${formatDate(suggestedDate)}`;
+  if (fixField === "start") {
+    const { newEnd } = fixDatesFor(successor, fixField, suggestedDate);
+    if (newEnd && successor.endDate && newEnd.getTime() !== successor.endDate.getTime()) {
+      hint += ` (end follows to ${formatDate(newEnd)})`;
+    }
+  }
+  return hint;
+}
+function openViolationPanel(violations, tasks, app, onUpdate, pluginSettings) {
   closeViolationPanel();
   const panel = document.createElement("div");
   panel.className = "gbv-violation-panel";
@@ -1142,7 +1371,7 @@ function openViolationPanel(violations, app, onUpdate, pluginSettings) {
     if (predVerb) appendMuted(` ${predVerb}`);
     const subText = document.createElement("div");
     subText.className = "gbv-violation-fix-hint";
-    subText.textContent = `Suggested: move ${violation.fixField} to ${formatDate(violation.suggestedDate)}`;
+    subText.textContent = fixHint(violation);
     textBlock.appendChild(mainText);
     textBlock.appendChild(subText);
     const applyBtn = document.createElement("button");
@@ -1165,9 +1394,16 @@ function openViolationPanel(violations, app, onUpdate, pluginSettings) {
     const applyAllBtn = document.createElement("button");
     applyAllBtn.className = "gbv-violation-apply-all";
     applyAllBtn.textContent = "Apply All";
+    applyAllBtn.title = "Fix every conflict, cascading through dependent tasks";
     applyAllBtn.addEventListener("click", async () => {
-      for (const v of [...remainingViolations]) {
-        await applyViolationFix(app, v, pluginSettings);
+      const plan = planCascadingFixes(tasks);
+      for (const { task, newStart, newEnd } of plan.fixes.values()) {
+        await writeTaskDates(app, task.file, newStart, newEnd, pluginSettings);
+      }
+      if (!plan.converged) {
+        new import_obsidian2.Notice("Some conflicts could not be fully resolved \u2014 check for circular dependencies.");
+      } else if (plan.fixes.size > 0) {
+        new import_obsidian2.Notice(`Updated ${plan.fixes.size} task${plan.fixes.size > 1 ? "s" : ""}.`);
       }
       onUpdate();
       closeViolationPanel();
@@ -1179,7 +1415,7 @@ function openViolationPanel(violations, app, onUpdate, pluginSettings) {
 }
 
 // src/ui/gantt-view.ts
-var GanttView = class extends import_obsidian2.BasesView {
+var GanttView = class extends import_obsidian3.BasesView {
   constructor(controller, containerEl, plugin) {
     super(controller);
     this.type = "gantt";
@@ -1275,13 +1511,14 @@ var GanttView = class extends import_obsidian2.BasesView {
         scrollArea.scrollLeft = Math.max(0, offset - scrollArea.clientWidth / 2);
       },
       onFixSchedule: () => {
-        openViolationPanel(violations, this.app, () => this.render(), this.plugin.settings);
+        openViolationPanel(violations, tasks, this.app, () => this.render(), this.plugin.settings);
       },
       onExport: async () => {
         await navigator.clipboard.writeText(exportToTSV(groups, timelineConfig));
       }
     });
-    this.renderColumnHeaders(headerRow, columns);
+    this.renderColumnHeaders(headerRow, columns, settings.zoom);
+    this.applyWeekendShading(barsArea, timelineConfig);
     const { taskRowMap, totalHeightPx } = this.renderTaskRows(
       groups,
       sidebar,
@@ -1297,6 +1534,7 @@ var GanttView = class extends import_obsidian2.BasesView {
     }
     if (settings.showDependencies) {
       renderDependencies(svgLayer, tasks, taskRowMap, timelineConfig, settings);
+      wireDependencyHover(barsArea, svgLayer);
     }
     requestAnimationFrame(() => {
       if (!container.clientHeight) {
@@ -1347,7 +1585,21 @@ var GanttView = class extends import_obsidian2.BasesView {
   formatGroupKey(raw) {
     return stripWikilink(raw) || "Ungrouped";
   }
-  renderColumnHeaders(headerRow, columns) {
+  /**
+   * Shades Saturday+Sunday bands at day and week zoom. One repeating
+   * gradient (7-day period, phase-shifted to the first Saturday) instead of
+   * per-day elements; the custom properties inherit into every bar row.
+   */
+  applyWeekendShading(barsArea, config) {
+    if (config.zoom !== "day" && config.zoom !== "week") return;
+    const ppd = config.pixelsPerDay;
+    const daysToSaturday = (6 - config.startDate.getDay() + 7) % 7;
+    barsArea.classList.add("gbv-weekend-shading");
+    barsArea.style.setProperty("--gbv-weekend-offset", `${daysToSaturday * ppd}px`);
+    barsArea.style.setProperty("--gbv-weekend-width", `${2 * ppd}px`);
+    barsArea.style.setProperty("--gbv-weekend-period", `${7 * ppd}px`);
+  }
+  renderColumnHeaders(headerRow, columns, zoom) {
     const topRow = headerRow.createEl("div", { cls: "gbv-header-top-row" });
     const botRow = headerRow.createEl("div", { cls: "gbv-header-bot-row" });
     let currentGroup = null;
@@ -1368,6 +1620,8 @@ var GanttView = class extends import_obsidian2.BasesView {
       }
       groupWidth += col.widthPx;
       const cell = botRow.createEl("div", { text: col.label, cls: "gbv-header-cell gbv-header-day" });
+      const dow = col.startDate.getDay();
+      if (zoom === "day" && (dow === 0 || dow === 6)) cell.classList.add("is-weekend");
       cell.style.width = `${col.widthPx}px`;
       cell.style.minWidth = `${col.widthPx}px`;
       cell.style.flexShrink = "0";
@@ -1405,8 +1659,12 @@ var GanttView = class extends import_obsidian2.BasesView {
         if (bounds) {
           const barEl = createTaskBar(task, bounds, settings.colorBy, settings.showPriority, this.plugin.settings);
           barRowEl.appendChild(barEl);
+          makeBarDraggable(barEl, task, timelineConfig, this.app, this.plugin.settings, {
+            resizable: !task.isMilestone
+          });
           barEl.addEventListener("click", (e) => {
             e.stopPropagation();
+            if (consumePostDragClick(barEl)) return;
             openPopupEditor(task, barEl, this.app, () => this.render(), this.plugin.settings);
           });
         }
@@ -1545,10 +1803,10 @@ function getViewOptions(_config) {
 }
 
 // src/settings/settings-tab.ts
-var import_obsidian5 = require("obsidian");
+var import_obsidian6 = require("obsidian");
 
 // src/settings/tasknotes.ts
-var import_obsidian3 = require("obsidian");
+var import_obsidian4 = require("obsidian");
 function toOptionsAndColors(items) {
   const options = [];
   const colors = {};
@@ -1562,12 +1820,12 @@ function toOptionsAndColors(items) {
 function syncFromTaskNotes(app, settings) {
   const tasknotes = app.plugins?.plugins?.["tasknotes"];
   if (!tasknotes) {
-    new import_obsidian3.Notice("TaskNotes plugin not found. Is it installed and enabled?");
+    new import_obsidian4.Notice("TaskNotes plugin not found. Is it installed and enabled?");
     return false;
   }
   const data = tasknotes.settings ?? tasknotes.data;
   if (!data) {
-    new import_obsidian3.Notice("Could not read TaskNotes settings.");
+    new import_obsidian4.Notice("Could not read TaskNotes settings.");
     return false;
   }
   let synced = false;
@@ -1584,15 +1842,15 @@ function syncFromTaskNotes(app, settings) {
     synced = true;
   }
   if (synced) {
-    new import_obsidian3.Notice("Synced status, priority, and colors from TaskNotes.");
+    new import_obsidian4.Notice("Synced status, priority, and colors from TaskNotes.");
   } else {
-    new import_obsidian3.Notice("No custom statuses or priorities found in TaskNotes.");
+    new import_obsidian4.Notice("No custom statuses or priorities found in TaskNotes.");
   }
   return synced;
 }
 
 // src/settings/examples.ts
-var import_obsidian4 = require("obsidian");
+var import_obsidian5 = require("obsidian");
 var EXAMPLES_FOLDER = "Gantt Examples";
 var EXAMPLE_NOTES = [
   {
@@ -1911,14 +2169,14 @@ async function createExampleNotes(app) {
     }
   }
   if (created > 0) {
-    new import_obsidian4.Notice(`Created ${created} file${created > 1 ? "s" : ""} in "${EXAMPLES_FOLDER}/"${skipped > 0 ? ` (${skipped} already existed)` : ""}`);
+    new import_obsidian5.Notice(`Created ${created} file${created > 1 ? "s" : ""} in "${EXAMPLES_FOLDER}/"${skipped > 0 ? ` (${skipped} already existed)` : ""}`);
   } else {
-    new import_obsidian4.Notice(`All example files already exist in "${EXAMPLES_FOLDER}/"`);
+    new import_obsidian5.Notice(`All example files already exist in "${EXAMPLES_FOLDER}/"`);
   }
 }
 
 // src/settings/settings-tab.ts
-var GanttSettingsTab = class extends import_obsidian5.PluginSettingTab {
+var GanttSettingsTab = class extends import_obsidian6.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.plugin = plugin;
@@ -1926,21 +2184,21 @@ var GanttSettingsTab = class extends import_obsidian5.PluginSettingTab {
   display() {
     const { containerEl } = this;
     containerEl.empty();
-    new import_obsidian5.Setting(containerEl).setName("Property mapping").setHeading();
-    new import_obsidian5.Setting(containerEl).setName("Start date property").setDesc("Frontmatter property used for the task start date.").addText((text) => {
+    new import_obsidian6.Setting(containerEl).setName("Property mapping").setHeading();
+    new import_obsidian6.Setting(containerEl).setName("Start date property").setDesc("Frontmatter property used for the task start date.").addText((text) => {
       text.setPlaceholder(DEFAULT_PLUGIN_SETTINGS.startDateProp).setValue(this.plugin.settings.startDateProp).onChange(async (value) => {
         this.plugin.settings.startDateProp = value.trim() || DEFAULT_PLUGIN_SETTINGS.startDateProp;
         await this.plugin.saveSettings();
       });
     });
-    new import_obsidian5.Setting(containerEl).setName("End date property").setDesc("Frontmatter property used for the task end date.").addText((text) => {
+    new import_obsidian6.Setting(containerEl).setName("End date property").setDesc("Frontmatter property used for the task end date.").addText((text) => {
       text.setPlaceholder(DEFAULT_PLUGIN_SETTINGS.endDateProp).setValue(this.plugin.settings.endDateProp).onChange(async (value) => {
         this.plugin.settings.endDateProp = value.trim() || DEFAULT_PLUGIN_SETTINGS.endDateProp;
         await this.plugin.saveSettings();
       });
     });
-    new import_obsidian5.Setting(containerEl).setName("Status & priority options").setHeading();
-    new import_obsidian5.Setting(containerEl).setName("Status options").setDesc("Comma-separated list of status values for the dropdown.").addText((text) => {
+    new import_obsidian6.Setting(containerEl).setName("Status & priority options").setHeading();
+    new import_obsidian6.Setting(containerEl).setName("Status options").setDesc("Comma-separated list of status values for the dropdown.").addText((text) => {
       text.setPlaceholder(DEFAULT_STATUS_OPTIONS.join(", ")).setValue(this.plugin.settings.statusOptions.join(", ")).onChange(async (value) => {
         const parsed = value.split(",").map((s) => s.trim()).filter(Boolean);
         this.plugin.settings.statusOptions = parsed.length > 0 ? parsed : DEFAULT_STATUS_OPTIONS;
@@ -1948,7 +2206,7 @@ var GanttSettingsTab = class extends import_obsidian5.PluginSettingTab {
       });
       text.inputEl.addClass("gbv-settings-wide-input");
     });
-    new import_obsidian5.Setting(containerEl).setName("Priority options").setDesc("Comma-separated list of priority values for the dropdown.").addText((text) => {
+    new import_obsidian6.Setting(containerEl).setName("Priority options").setDesc("Comma-separated list of priority values for the dropdown.").addText((text) => {
       text.setPlaceholder(DEFAULT_PRIORITY_OPTIONS.join(", ")).setValue(this.plugin.settings.priorityOptions.join(", ")).onChange(async (value) => {
         const parsed = value.split(",").map((s) => s.trim()).filter(Boolean);
         this.plugin.settings.priorityOptions = parsed.length > 0 ? parsed : DEFAULT_PRIORITY_OPTIONS;
@@ -1956,7 +2214,7 @@ var GanttSettingsTab = class extends import_obsidian5.PluginSettingTab {
       });
       text.inputEl.addClass("gbv-settings-wide-input");
     });
-    new import_obsidian5.Setting(containerEl).setName("Sync from TaskNotes").setDesc("Import status and priority options from the TaskNotes plugin.").addButton((btn) => {
+    new import_obsidian6.Setting(containerEl).setName("Sync from TaskNotes").setDesc("Import status and priority options from the TaskNotes plugin.").addButton((btn) => {
       btn.setButtonText("Sync").onClick(async () => {
         if (syncFromTaskNotes(this.app, this.plugin.settings)) {
           await this.plugin.saveSettings();
@@ -1964,15 +2222,15 @@ var GanttSettingsTab = class extends import_obsidian5.PluginSettingTab {
         }
       });
     });
-    new import_obsidian5.Setting(containerEl).setName("Examples").setHeading();
-    new import_obsidian5.Setting(containerEl).setName("Create example notes").setDesc('Creates a small set of linked notes in your vault demonstrating all four dependency types (FS, SS, FF, SF). Notes are placed in a "Gantt Examples" folder.').addButton((btn) => {
+    new import_obsidian6.Setting(containerEl).setName("Examples").setHeading();
+    new import_obsidian6.Setting(containerEl).setName("Create example notes").setDesc('Creates a small set of linked notes in your vault demonstrating all four dependency types (FS, SS, FF, SF). Notes are placed in a "Gantt Examples" folder.').addButton((btn) => {
       btn.setButtonText("Create examples").setCta().onClick(() => createExampleNotes(this.app));
     });
   }
 };
 
 // src/main.ts
-var GanttBasesViewPlugin = class extends import_obsidian6.Plugin {
+var GanttBasesViewPlugin = class extends import_obsidian7.Plugin {
   constructor() {
     super(...arguments);
     this.settings = { ...DEFAULT_PLUGIN_SETTINGS };
